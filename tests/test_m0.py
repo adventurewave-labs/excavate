@@ -442,6 +442,27 @@ class TestResume(unittest.TestCase):
             self.assertIsNone(cap["raw_path"])  # state no longer points at stale bytes
             self.assertFalse(raw.exists())  # and the stale file is gone
 
+    def test_local_write_failure_fails_row_and_continues(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dig = Dig.create(Path(tmp), "x.com")
+            # a FILE squatting on the directory the row needs — mkdir/write raises OSError
+            blocker = dig.raw_dir / "d"
+            blocker.write_bytes(b"i am not a directory")
+            dig.save_captures([fresh_capture("http://x.com/d/a.html")])
+            summary = run_pull(dig, mock_client(ok_handler), limiter=no_wait_limiter(), sleep_fn=lambda s: None)
+            self.assertEqual(summary["failed"], 1)
+            cap = dig.load_captures()[0]
+            self.assertEqual(cap["fetch_state"], "failed_5xx")  # transient — resume retries
+            self.assertIn("local write failed", cap["error"])
+
+    def test_negative_limit_pulls_everything(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dig = Dig.create(Path(tmp), "x.com")
+            dig.save_captures([fresh_capture(f"http://x.com/{i}.html") for i in range(3)])
+            summary = run_pull(dig, mock_client(ok_handler), limit=-1,
+                               limiter=no_wait_limiter(), sleep_fn=lambda s: None)
+            self.assertEqual(summary["fetched"], 3)  # not a backwards slice
+
     def test_malformed_cdx_payload_rejected(self):
         from excavate.cdx import fetch_cdx_rows
 

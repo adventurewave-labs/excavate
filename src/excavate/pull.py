@@ -185,11 +185,12 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
     # resumed run overwrites its own file instead of forking -1/-2 copies
     claimed: dict[str, str] = {}
     for cap in captures:
-        if cap.get("raw_path"):
-            claimed[cap["raw_path"][len("raw/"):]] = cap["url"]
+        raw_path = cap.get("raw_path") or ""
+        if raw_path.startswith("raw/"):
+            claimed[raw_path[len("raw/"):]] = cap["url"]
 
     todo = [c for c in captures if c["fetch_state"] == "pending"]
-    if limit is not None:
+    if limit is not None and limit > 0:
         todo = todo[:limit]
     fetched = failed = 0
     for capture in todo:
