@@ -23,6 +23,7 @@ from .dig import Dig, safe_relpath
 # absolute and path-relative forms, any case (real pages vary)
 WAYBACK_PREFIX = re.compile(r"https?://web\.archive\.org/web/\d{6,14}(?:id_|im_|js_|cs_)?/", re.IGNORECASE)
 WAYBACK_PREFIX_REL = re.compile(r"^/web/\d{6,14}(?:id_|im_|js_|cs_)?/", re.IGNORECASE)
+WAYBACK_PREFIX_PROTOREL = re.compile(r"^//web\.archive\.org/web/\d{6,14}(?:id_|im_|js_|cs_)?/", re.IGNORECASE)
 
 # Wayback toolbar assets injected into im_ replay pages
 CHROME_ASSETS = re.compile(r"<link[^>]+(banner-styles\.css|iconochive\.css)[^>]*>", re.IGNORECASE)
@@ -46,6 +47,7 @@ def same_site_host(host: str, domain: str) -> bool:
 
 def _strip_wayback(url: str) -> str:
     stripped = WAYBACK_PREFIX.sub("", url)
+    stripped = WAYBACK_PREFIX_PROTOREL.sub("", stripped)
     return WAYBACK_PREFIX_REL.sub("", stripped)
 
 

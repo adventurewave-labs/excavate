@@ -284,6 +284,12 @@ class TestClean(unittest.TestCase):
         self.assertIn('href="page.html"', text)  # not mistaken for a relative link
         self.assertIn('src="i.png"', text)
 
+    def test_protocol_relative_wayback_prefix_stripped(self):
+        html = '<img src="//web.archive.org/web/20030601000000im_/https://magpu.com/img/i.png">'
+        text, log = clean_text(html, "magpu.com", "index.html", is_css=False)
+        self.assertIn('src="img/i.png"', text)  # not skipped as protocol-relative external
+        self.assertEqual(len(log), 1)
+
     def test_near_miss_domain_stays_external(self):
         html = '<a href="http://notmagpu.com/page.html">evil</a>'
         text, log = clean_text(html, "magpu.com", "index.html", is_css=False)
@@ -437,7 +443,7 @@ class TestResume(unittest.TestCase):
                 {"url": "http://x.com/a.html", "timestamp": "20000101000000", "status": "200",
                  "mimetype": "text/html", "digest": "a", "fetch_state": "pending",
                  "skip_reason": None, "sha1_fetched": "aa", "source": "id_",
-                 "http_status": 200, "magic_ok": None, "error": None,
+                 "http_status": 200, "magic_ok": True, "error": None,
                  "raw_path": "raw/a.html", "path_collision": None},
             ])
 
@@ -452,6 +458,24 @@ class TestResume(unittest.TestCase):
             self.assertEqual(cap["raw_path"], "raw/a.html")
             self.assertTrue(raw.exists())
             self.assertIn("re-fetch failed", cap["error"])  # the attempt is disclosed, not hidden
+            # and the restored row keeps its provenance, not blank fields
+            self.assertEqual(cap["source"], "id_")
+            self.assertEqual(cap["sha1_fetched"], "aa")
+            self.assertTrue(cap["magic_ok"])
+
+    def test_case_insensitive_path_collision_gets_suffix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dig = Dig.create(Path(tmp), "x.com")
+            # APFS-default case-insensitive: Index.HTML and index.html are one file
+            dig.save_captures([fresh_capture("http://x.com/Index.HTML"),
+                               fresh_capture("http://x.com/index.html")])
+            summary = run_pull(dig, mock_client(ok_handler), limiter=no_wait_limiter(), sleep_fn=lambda s: None)
+            self.assertEqual(summary["fetched"], 2)
+            caps = {c["url"]: c for c in dig.load_captures()}
+            first, second = caps["http://x.com/Index.HTML"], caps["http://x.com/index.html"]
+            self.assertNotEqual(first["raw_path"].lower(), second["raw_path"].lower())
+            self.assertTrue(second["path_collision"])  # disclosed
+            self.assertEqual(len(list(dig.raw_dir.iterdir())), 2)  # both bytes survive
 
     def test_429_then_404s_is_transient(self):
         # a 404 observed while throttled is not trustworthy as permanent

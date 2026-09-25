@@ -160,13 +160,18 @@ def fetch_one(capture: dict, client: httpx.Client, limiter: RateLimiter, sleep_f
     return capture
 
 
-def _claim_path(claimed: dict[str, str], rel: str, url: str) -> tuple[str, bool]:
-    """Reserve `rel` for `url`. Returns (path, collision) — collision means a
-    different URL already owns the canonical name and this one gets a suffix."""
-    owner = claimed.get(rel)
-    if owner is None or owner == url:
+def _claim_path(claimed: dict[str, str], claimed_ci: dict[str, str], rel: str, url: str) -> tuple[str, bool]:
+    """Reserve `rel` for `url`. Returns (path, collision).
+
+    Case-insensitive filesystems (default APFS) treat Foo.html and foo.html
+    as the same file, so claims are tracked case-insensitively — a URL whose
+    path differs only in case from an existing claim gets a suffix."""
+    if claimed_ci.get(rel.lower()) is None:
         claimed[rel] = url
+        claimed_ci[rel.lower()] = url
         return rel, False
+    if claimed_ci[rel.lower()] == url:
+        return rel, False  # our own claim, any case
     stem, _, suffix = rel.rpartition(".")
     if not stem:
         stem, suffix = rel, ""
@@ -174,8 +179,9 @@ def _claim_path(claimed: dict[str, str], rel: str, url: str) -> tuple[str, bool]
         suffix = "." + suffix
     for i in range(1, 1000):
         alt = f"{stem}-{i}{suffix}"
-        if alt not in claimed:
+        if claimed_ci.get(alt.lower()) is None:
             claimed[alt] = url
+            claimed_ci[alt.lower()] = url
             return alt, True
     raise RuntimeError(f"path collision exhausted for {rel}")
 
@@ -186,12 +192,16 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
     captures = dig.load_captures()
 
     # rebuild path claims from existing state — dedupe key is the URL, so a
-    # resumed run overwrites its own file instead of forking -1/-2 copies
+    # resumed run overwrites its own file instead of forking -1/-2 copies.
+    # claimed_ci is the case-insensitive view (APFS-style filesystems).
     claimed: dict[str, str] = {}
+    claimed_ci: dict[str, str] = {}
     for cap in captures:
         raw_path = cap.get("raw_path") or ""
         if raw_path.startswith("raw/"):
-            claimed[raw_path[len("raw/"):]] = cap["url"]
+            rel = raw_path[len("raw/"):]
+            claimed[rel] = cap["url"]
+            claimed_ci[rel.lower()] = cap["url"]
 
     todo = [c for c in captures if c["fetch_state"] == "pending"]
     if limit is not None and limit > 0:
@@ -202,6 +212,9 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
         prev_rel = prev_rel[len("raw/"):] if prev_rel and prev_rel.startswith("raw/") else None
         prev_collision = bool(capture.get("path_collision"))
         prev_sha1 = capture.get("sha1_fetched")
+        prev_source = capture.get("source")
+        prev_http = capture.get("http_status")
+        prev_magic = capture.get("magic_ok")
         capture.update(sha1_fetched=None, source=None, http_status=None,
                        magic_ok=None, error=None, path_collision=None)
         result = fetch_one(capture, client, limiter, sleep_fn=sleep_fn)
@@ -211,8 +224,9 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
                 # resumed row: reuse its own path (overwrites in place, no forks)
                 rel, collision = prev_rel, prev_collision
                 claimed[rel] = result["url"]
+                claimed_ci[rel.lower()] = result["url"]
             else:
-                rel, collision = _claim_path(claimed, safe_relpath(result["url"]), result["url"])
+                rel, collision = _claim_path(claimed, claimed_ci, safe_relpath(result["url"]), result["url"])
             target = dig.raw_dir / rel
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -223,11 +237,13 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
                 if prev_rel and claimed.get(prev_rel) == result["url"]:
                     result.update(fetch_state="fetched", raw_path=f"raw/{prev_rel}",
                                   path_collision=prev_collision or None, sha1_fetched=prev_sha1,
+                                  source=prev_source, http_status=prev_http, magic_ok=prev_magic,
                                   error=f"re-fetch write failed (will retry on next pull): {exc}")
                 else:
                     result.update(fetch_state="failed_5xx", error=f"local write failed: {exc}",
                                   raw_path=None, path_collision=None)
                     claimed.pop(rel, None)
+                    claimed_ci.pop(rel.lower(), None)
                 failed += 1
                 dig.save_captures(captures)
                 continue
@@ -241,7 +257,8 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
             result["error"] = f"re-fetch failed ({result['fetch_state']}): {result.get('error')}"
             if prev_rel and claimed.get(prev_rel) == result["url"]:
                 result.update(fetch_state="fetched", raw_path=f"raw/{prev_rel}",
-                              path_collision=prev_collision or None, sha1_fetched=prev_sha1)
+                              path_collision=prev_collision or None, sha1_fetched=prev_sha1,
+                              source=prev_source, http_status=prev_http, magic_ok=prev_magic)
             else:
                 result.update(raw_path=None, path_collision=None)
             failed += 1
