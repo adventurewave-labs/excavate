@@ -20,9 +20,9 @@ from pathlib import Path
 from .dig import Dig, safe_relpath
 
 # /web/<timestamp><mode>/ prefix inside im_-sourced or stale-linked content —
-# absolute and path-relative forms
-WAYBACK_PREFIX = re.compile(r"https?://web\.archive\.org/web/\d{6,14}(?:id_|im_|js_|cs_)?/")
-WAYBACK_PREFIX_REL = re.compile(r"^/web/\d{6,14}(?:id_|im_|js_|cs_)?/")
+# absolute and path-relative forms, any case (real pages vary)
+WAYBACK_PREFIX = re.compile(r"https?://web\.archive\.org/web/\d{6,14}(?:id_|im_|js_|cs_)?/", re.IGNORECASE)
+WAYBACK_PREFIX_REL = re.compile(r"^/web/\d{6,14}(?:id_|im_|js_|cs_)?/", re.IGNORECASE)
 
 # Wayback toolbar assets injected into im_ replay pages
 CHROME_ASSETS = re.compile(r"<link[^>]+(banner-styles\.css|iconochive\.css)[^>]*>", re.IGNORECASE)
@@ -62,7 +62,7 @@ def _classify(domain: str, url: str) -> tuple[str, str] | None:
     stripped = _strip_wayback(url)
     if stripped != url:
         url = stripped
-    match = re.match(r"https?://([^/?#]+)([/?#].*)?$", url)
+    match = re.match(r"(?i:https?)://([^/?#]+)([/?#].*)?$", url)
     if match:
         if not same_site_host(match.group(1), domain):
             return None  # external link
@@ -211,6 +211,15 @@ def run_clean(dig: Dig) -> dict:
 
     pulled, valid, errors = effective_pulled(dig, captures)
     all_log.extend(errors)
+
+    if not valid:
+        # nothing cleanable — do NOT wipe a previously cleaned site/
+        (dig.root / "REWRITES.md").write_text(
+            f"# REWRITES — {dig.domain}\n\nEvery URL rewrite applied during clean. Nothing silent.\n\n"
+            + "\n".join(all_log) + "\nno cleanable captures — site/ left untouched\n",
+            encoding="utf-8",
+        )
+        return {"cleaned": 0, "rewrites": 0, "never_crawled": []}
 
     # full re-clean: wipe stale output so no orphan survives from earlier runs
     if dig.site_dir.exists():

@@ -201,6 +201,7 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
         prev_rel = capture.get("raw_path")
         prev_rel = prev_rel[len("raw/"):] if prev_rel and prev_rel.startswith("raw/") else None
         prev_collision = bool(capture.get("path_collision"))
+        prev_sha1 = capture.get("sha1_fetched")
         capture.update(sha1_fetched=None, source=None, http_status=None,
                        magic_ok=None, error=None, path_collision=None)
         result = fetch_one(capture, client, limiter, sleep_fn=sleep_fn)
@@ -217,11 +218,16 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(body)
             except OSError as exc:
-                # filesystem limits etc. — fail the row (transient: resume retries),
-                # never wedge the run
-                result.update(fetch_state="failed_5xx", error=f"local write failed: {exc}",
-                              raw_path=None, path_collision=None)
-                claimed.pop(rel, None)
+                # filesystem limits etc. — never wedge the run, never lose
+                # previously-fetched bytes
+                if prev_rel and claimed.get(prev_rel) == result["url"]:
+                    result.update(fetch_state="fetched", raw_path=f"raw/{prev_rel}",
+                                  path_collision=prev_collision or None, sha1_fetched=prev_sha1,
+                                  error=f"re-fetch write failed (will retry on next pull): {exc}")
+                else:
+                    result.update(fetch_state="failed_5xx", error=f"local write failed: {exc}",
+                                  raw_path=None, path_collision=None)
+                    claimed.pop(rel, None)
                 failed += 1
                 dig.save_captures(captures)
                 continue
@@ -229,15 +235,15 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
             result["path_collision"] = collision or None
             fetched += 1
         else:
-            # failed (re-)fetch: any previously-fetched bytes no longer correspond
-            # to this row's state — drop the association and the file
+            # a failed (re-)fetch never destroys previously-fetched bytes — they
+            # are the best-known capture. The attempt is recorded, state stays
+            # honest, and the report discloses it.
+            result["error"] = f"re-fetch failed ({result['fetch_state']}): {result.get('error')}"
             if prev_rel and claimed.get(prev_rel) == result["url"]:
-                old = dig.raw_dir / prev_rel
-                if old.exists():
-                    old.unlink()
-                claimed.pop(prev_rel, None)
-            result["raw_path"] = None
-            result["path_collision"] = None
+                result.update(fetch_state="fetched", raw_path=f"raw/{prev_rel}",
+                              path_collision=prev_collision or None, sha1_fetched=prev_sha1)
+            else:
+                result.update(raw_path=None, path_collision=None)
             failed += 1
         dig.save_captures(captures)  # persist after every row — kill-safe
     counts = {state: sum(1 for c in captures if c["fetch_state"] == state)

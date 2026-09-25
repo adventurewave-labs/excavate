@@ -72,7 +72,9 @@ def cmd_pull(args: argparse.Namespace) -> int:
         f"{totals.get('failed_4xx', 0)} permanent, {failed_transient} transient "
         f"(budget {REQUESTS_PER_MINUTE}/min)"
     )
-    return 0 if summary["failed"] == 0 else 1
+    # permanent 404s are expected archaeology, transient failures resume —
+    # neither is a command failure; the report carries the detail
+    return 0
 
 
 def cmd_clean(args: argparse.Namespace) -> int:

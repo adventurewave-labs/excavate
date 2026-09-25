@@ -278,6 +278,12 @@ class TestClean(unittest.TestCase):
         self.assertIn('href="page.html"', text)
         self.assertEqual(len(log), 1)
 
+    def test_uppercase_scheme_and_prefix_still_local(self):
+        html = '<a href="HTTP://MAGPU.COM/page.html">caps</a><img src="HTTPS://WEB.ARCHIVE.ORG/web/20030601000000im_/https://magpu.com/i.png">'
+        text, log = clean_text(html, "magpu.com", "index.html", is_css=False)
+        self.assertIn('href="page.html"', text)  # not mistaken for a relative link
+        self.assertIn('src="i.png"', text)
+
     def test_near_miss_domain_stays_external(self):
         html = '<a href="http://notmagpu.com/page.html">evil</a>'
         text, log = clean_text(html, "magpu.com", "index.html", is_css=False)
@@ -422,7 +428,7 @@ class TestCleanAndReport(unittest.TestCase):
 
 
 class TestResume(unittest.TestCase):
-    def test_failed_refetch_clears_stale_raw_path(self):
+    def test_failed_refetch_keeps_previous_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
             dig = Dig.create(Path(tmp), "x.com")
             raw = dig.raw_dir / "a.html"
@@ -430,8 +436,8 @@ class TestResume(unittest.TestCase):
             dig.save_captures([
                 {"url": "http://x.com/a.html", "timestamp": "20000101000000", "status": "200",
                  "mimetype": "text/html", "digest": "a", "fetch_state": "pending",
-                 "skip_reason": None, "sha1_fetched": None, "source": None,
-                 "http_status": None, "magic_ok": None, "error": None,
+                 "skip_reason": None, "sha1_fetched": "aa", "source": "id_",
+                 "http_status": 200, "magic_ok": None, "error": None,
                  "raw_path": "raw/a.html", "path_collision": None},
             ])
 
@@ -441,9 +447,11 @@ class TestResume(unittest.TestCase):
             summary = run_pull(dig, mock_client(handler), limiter=no_wait_limiter(), sleep_fn=lambda s: None)
             self.assertEqual(summary["failed"], 1)
             cap = dig.load_captures()[0]
-            self.assertEqual(cap["fetch_state"], "failed_4xx")
-            self.assertIsNone(cap["raw_path"])  # state no longer points at stale bytes
-            self.assertFalse(raw.exists())  # and the stale file is gone
+            # old bytes are the best-known capture — a failed re-fetch never deletes them
+            self.assertEqual(cap["fetch_state"], "fetched")
+            self.assertEqual(cap["raw_path"], "raw/a.html")
+            self.assertTrue(raw.exists())
+            self.assertIn("re-fetch failed", cap["error"])  # the attempt is disclosed, not hidden
 
     def test_429_then_404s_is_transient(self):
         # a 404 observed while throttled is not trustworthy as permanent
