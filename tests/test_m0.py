@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 import tempfile
 import unittest
@@ -12,16 +11,45 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from excavate.cdx import resolve_best  # noqa: E402
-from excavate.clean import clean_text  # noqa: E402
+from excavate.cdx import apply_inventory, resolve_best  # noqa: E402
+from excavate.clean import clean_text, run_clean  # noqa: E402
 from excavate.dig import Dig, safe_relpath  # noqa: E402
-from excavate.pull import RateLimiter, fetch_one, magic_ok, sniff_type  # noqa: E402
+from excavate.pull import (  # noqa: E402
+    RateLimiter,
+    fetch_one,
+    magic_ok,
+    sniff_type,
+    run_pull,
+)
+from excavate.report import run_report  # noqa: E402
 
 CDX_HEADER = ["urlkey", "timestamp", "original", "mimetype", "statuscode", "digest", "length"]
 
 
 def cdx_row(url: str, ts: str, mime: str, status: str, digest: str = "abc") -> dict:
     return dict(zip(CDX_HEADER, [url, ts, url, mime, status, digest, "100"]))
+
+
+def no_wait_limiter() -> RateLimiter:
+    return RateLimiter(sleep_fn=lambda s: None, clock=lambda: 0.0)
+
+
+def mock_client(handler) -> httpx.Client:
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def ok_handler(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, content=b"<html>body</html>")
+
+
+def fresh_capture(url: str = "http://x.com/") -> dict:
+    return {
+        "url": url, "timestamp": "20000101000000", "status": "200",
+        "mimetype": "text/html", "digest": "abc", "fetch_state": "pending",
+        "skip_reason": None, "sha1_fetched": None, "source": None,
+        "http_status": None, "magic_ok": None, "error": None,
+        "raw_path": None, "path_collision": None,
+    }
 
 
 class TestResolveBest(unittest.TestCase):
@@ -45,10 +73,48 @@ class TestResolveBest(unittest.TestCase):
         self.assertEqual(caps["http://x.com/"]["fetch_state"], "skipped")
         self.assertEqual(caps["http://x.com/a.html"]["fetch_state"], "skipped")
 
-    def test_raw_row_count_preserved_upstream(self):
-        rows = [cdx_row("http://x.com/", f"200{m:02d}01000000", "text/html", "200") for m in range(1, 13)]
-        self.assertEqual(len(rows), 12)
-        self.assertEqual(len(resolve_best(rows)), 1)
+    def test_ragged_rows_skipped_not_crash(self):
+        rows = [cdx_row("http://x.com/", "20010101000000", "text/html", "200")]
+        rows.append({"urlkey": "x", "timestamp": "2002"})  # malformed — short
+        caps = resolve_best(rows)
+        self.assertEqual(len(caps), 1)  # ragged row contributed nothing, no KeyError
+
+
+class TestInventoryMerge(unittest.TestCase):
+    def test_same_timestamp_keeps_fetch_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dig = Dig.create(Path(tmp), "x.com")
+            rows = [cdx_row("http://x.com/", "20010101000000", "text/html", "200")]
+            apply_inventory(dig, rows)
+            caps = dig.load_captures()
+            caps[0].update(fetch_state="fetched", raw_path="raw/index.html", sha1_fetched="deadbeef")
+            dig.save_captures(caps)
+
+            apply_inventory(dig, rows)  # re-inventory must not wipe state
+            cap = dig.load_captures()[0]
+            self.assertEqual(cap["fetch_state"], "fetched")
+            self.assertEqual(cap["raw_path"], "raw/index.html")
+            self.assertEqual(cap["sha1_fetched"], "deadbeef")
+
+    def test_different_timestamp_resets_to_pending(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dig = Dig.create(Path(tmp), "x.com")
+            apply_inventory(dig, [cdx_row("http://x.com/", "20010101000000", "text/html", "200")])
+            caps = dig.load_captures()
+            caps[0]["fetch_state"] = "fetched"
+            dig.save_captures(caps)
+
+            apply_inventory(dig, [cdx_row("http://x.com/", "20090101000000", "text/html", "200")])
+            cap = dig.load_captures()[0]
+            self.assertEqual(cap["fetch_state"], "pending")
+            self.assertEqual(cap["timestamp"], "20090101000000")
+
+    def test_raw_manifest_keeps_every_row(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dig = Dig.create(Path(tmp), "x.com")
+            rows = [cdx_row("http://x.com/", f"200{m:02d}01000000", "text/html", "200") for m in range(1, 13)]
+            apply_inventory(dig, rows)
+            self.assertEqual(len(dig.raw_manifest_rows()), 12)  # strops invariant, for real this time
 
 
 class TestRateLimiter(unittest.TestCase):
@@ -63,28 +129,20 @@ class TestRateLimiter(unittest.TestCase):
         limiter.wait()
         limiter.wait()  # 1.0 elapsed < 2.0 interval -> sleeps 1.0
         self.assertEqual(sleeps, [1.0])
+        self.assertEqual(limiter._last, 1.0)  # post-sleep clock recorded
+
+    def test_zero_rate_rejected(self):
+        with self.assertRaises(ValueError):
+            RateLimiter(per_minute=0)
 
 
-class TestPull(unittest.TestCase):
-    def _capture(self) -> dict:
-        return {
-            "url": "http://x.com/", "timestamp": "20000101000000", "status": "200",
-            "mimetype": "text/html", "digest": "abc", "fetch_state": "pending",
-            "skip_reason": None, "sha1_fetched": None, "source": None,
-            "http_status": None, "magic_ok": None, "error": None,
-        }
-
+class TestPullClassification(unittest.TestCase):
     def test_id_success_first_try(self):
-        def handler(request: httpx.Request) -> httpx.Response:
-            assert "id_" in str(request.url)
-            return httpx.Response(200, content=b"<html>hi</html>")
-
-        limiter = RateLimiter(sleep_fn=lambda s: None, clock=lambda: 0.0)
-        result = fetch_one(self._capture(), httpx.Client(transport=httpx.MockTransport(handler)), limiter, sleep_fn=lambda s: None)
+        import hashlib
+        result = fetch_one(fresh_capture(), mock_client(ok_handler), no_wait_limiter(), sleep_fn=lambda s: None)
         self.assertEqual(result["fetch_state"], "fetched")
         self.assertEqual(result["source"], "id_")
-        import hashlib
-        self.assertEqual(result["sha1_fetched"], hashlib.sha1(b"<html>hi</html>").hexdigest())
+        self.assertEqual(result["sha1_fetched"], hashlib.sha1(b"<html>body</html>").hexdigest())
 
     def test_im_fallback_on_404(self):
         def handler(request: httpx.Request) -> httpx.Response:
@@ -92,10 +150,23 @@ class TestPull(unittest.TestCase):
                 return httpx.Response(404, content=b"not found")
             return httpx.Response(200, content=b"<html>via im</html>")
 
-        limiter = RateLimiter(sleep_fn=lambda s: None, clock=lambda: 0.0)
-        result = fetch_one(self._capture(), httpx.Client(transport=httpx.MockTransport(handler)), limiter, sleep_fn=lambda s: None)
+        result = fetch_one(fresh_capture(), mock_client(handler), no_wait_limiter(), sleep_fn=lambda s: None)
         self.assertEqual(result["fetch_state"], "fetched")
         self.assertEqual(result["source"], "im_")
+
+    def test_404_both_modes_is_permanent_4xx(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404, content=b"gone")
+
+        result = fetch_one(fresh_capture(), mock_client(handler), no_wait_limiter(), sleep_fn=lambda s: None)
+        self.assertEqual(result["fetch_state"], "failed_4xx")
+
+    def test_transport_error_is_transient_5xx(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("boom")
+
+        result = fetch_one(fresh_capture(), mock_client(handler), no_wait_limiter(), sleep_fn=lambda s: None)
+        self.assertEqual(result["fetch_state"], "failed_5xx")
 
     def test_429_backoff_then_success(self):
         calls = {"n": 0}
@@ -107,22 +178,32 @@ class TestPull(unittest.TestCase):
             return httpx.Response(200, content=b"<html>ok</html>")
 
         backoffs: list[float] = []
-        limiter = RateLimiter(sleep_fn=lambda s: None, clock=lambda: 0.0)
-        result = fetch_one(self._capture(), httpx.Client(transport=httpx.MockTransport(handler)), limiter,
-                           sleep_fn=backoffs.append)
+        result = fetch_one(fresh_capture(), mock_client(handler), no_wait_limiter(), sleep_fn=backoffs.append)
         self.assertEqual(result["fetch_state"], "fetched")
-        self.assertEqual(backoffs, [30, 60])  # schedule is 30/60/120 — two 429s cost two backoffs
+        self.assertEqual(backoffs, [30, 60])  # schedule 30/60/120 — two 429s cost two chances
 
-    def test_429_exhaustion_fails_row(self):
+    def test_429_exhaustion_shared_budget_fails_transient(self):
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(429, content=b"slow down")
 
         backoffs: list[float] = []
-        limiter = RateLimiter(sleep_fn=lambda s: None, clock=lambda: 0.0)
-        result = fetch_one(self._capture(), httpx.Client(transport=httpx.MockTransport(handler)), limiter,
-                           sleep_fn=backoffs.append)
-        self.assertEqual(result["fetch_state"], "failed_4xx")
-        self.assertEqual(len(backoffs), 6)  # 3 per replay mode
+        result = fetch_one(fresh_capture(), mock_client(handler), no_wait_limiter(), sleep_fn=backoffs.append)
+        self.assertEqual(result["fetch_state"], "failed_5xx")  # 429 is transient — resume retries it
+        self.assertEqual(backoffs, [30, 60, 120])  # 3 chances per row, shared across modes
+
+    def test_5xx_retried_with_backoff(self):
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return httpx.Response(503, content=b"overloaded")
+            return httpx.Response(200, content=b"<html>ok</html>")
+
+        backoffs: list[float] = []
+        result = fetch_one(fresh_capture(), mock_client(handler), no_wait_limiter(), sleep_fn=backoffs.append)
+        self.assertEqual(result["fetch_state"], "fetched")
+        self.assertEqual(backoffs, [30])
 
 
 class TestMagicBytes(unittest.TestCase):
@@ -131,6 +212,10 @@ class TestMagicBytes(unittest.TestCase):
         self.assertTrue(magic_ok(b"\x89PNG" + b"0" * 20, "img/pic.png"))
         self.assertFalse(magic_ok(b"<html>not a png</html>", "img/pic.png"))
         self.assertIsNone(magic_ok(b"\x00\x01binary", "data/file.dat"))
+
+    def test_html_bodies_validated(self):
+        self.assertTrue(magic_ok(b"<html>x</html>", "index.html"))
+        self.assertFalse(magic_ok(b"\x89PNGx", "page.html"))  # a png saved as .html is a lie
 
 
 class TestClean(unittest.TestCase):
@@ -160,6 +245,18 @@ class TestClean(unittest.TestCase):
         self.assertIn('href="gone/dir/"', text)  # not mapped to index.html — that file was never pulled
         self.assertEqual(len(log), 1)  # absolute→relative localization is still a logged rewrite
 
+    def test_www_variant_is_internal(self):
+        html = '<a href="http://www.magpu.com/page.html">www</a>'
+        text, log = clean_text(html, "magpu.com", "index.html", {"page.html"}, is_css=False)
+        self.assertIn('href="page.html"', text)
+        self.assertEqual(len(log), 1)
+
+    def test_near_miss_domain_stays_external(self):
+        html = '<a href="http://notmagpu.com/page.html">evil</a>'
+        text, log = clean_text(html, "magpu.com", "index.html", {"page.html"}, is_css=False)
+        self.assertIn('href="http://notmagpu.com/page.html"', text)
+        self.assertEqual(log, [])
+
 
 class TestSafeRelpath(unittest.TestCase):
     def test_directory_and_index_mapping(self):
@@ -167,6 +264,95 @@ class TestSafeRelpath(unittest.TestCase):
         self.assertEqual(safe_relpath("http://x.com/music/"), "music/index.html")
         self.assertEqual(safe_relpath("http://x.com/music"), "music/index.html")
         self.assertEqual(safe_relpath("http://x.com/a/b.png"), "a/b.png")
+
+    def test_traversal_neutralized(self):
+        # CDX `original` is attacker-controllable — this must never escape the dig
+        self.assertEqual(safe_relpath("http://x.com/%2e%2e/%2e%2e/etc/passwd"), "etc/passwd/index.html")
+        self.assertEqual(safe_relpath("http://x.com/a/../../b.html"), "a/b.html")
+        self.assertEqual(safe_relpath("http://x.com/..%2f..%2fsecret"), "secret/index.html")
+        self.assertNotIn("..", safe_relpath("http://x.com/foo/../bar/baz.css"))
+
+    def test_control_bytes_stripped(self):
+        self.assertEqual(safe_relpath("http://x.com/a\x00b.html"), "ab.html")
+
+
+class TestPathCollision(unittest.TestCase):
+    def test_url_keyed_dedupe_and_resume_no_fork(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dig = Dig.create(Path(tmp), "x.com")
+            # /a and /a/ both map to a/index.html — one canonical path, two URLs
+            dig.save_captures([fresh_capture("http://x.com/a"), fresh_capture("http://x.com/a/")])
+            summary = run_pull(dig, mock_client(ok_handler), limiter=no_wait_limiter(), sleep_fn=lambda s: None)
+            self.assertEqual(summary["fetched"], 2)
+            caps = {c["url"]: c for c in dig.load_captures()}
+            self.assertEqual(caps["http://x.com/a"]["raw_path"], "raw/a/index.html")
+            self.assertFalse(caps["http://x.com/a"]["path_collision"])
+            self.assertEqual(caps["http://x.com/a/"]["raw_path"], "raw/a/index-1.html")
+            self.assertTrue(caps["http://x.com/a/"]["path_collision"])
+
+            # resume: re-fetch the collision row — must reuse its own path, not fork -2
+            caps["http://x.com/a/"]["fetch_state"] = "pending"
+            dig.save_captures(list(caps.values()))
+            run_pull(dig, mock_client(ok_handler), limiter=no_wait_limiter(), sleep_fn=lambda s: None)
+            caps = {c["url"]: c for c in dig.load_captures()}
+            self.assertEqual(caps["http://x.com/a/"]["raw_path"], "raw/a/index-1.html")
+            self.assertEqual(len(list((dig.root / "raw" / "a").iterdir())), 2)  # no -2 fork
+
+
+class TestCleanAndReport(unittest.TestCase):
+    def _dig_with_fetched(self, tmp: str) -> Dig:
+        dig = Dig.create(Path(tmp), "x.com")
+        index = dig.raw_dir / "index.html"
+        index.write_bytes(b'<html><body><a href="/a/">a</a><a href="/missing.html">m</a></body></html>')
+        sub = dig.raw_dir / "a"
+        sub.mkdir(exist_ok=True)
+        (sub / "index-1.html").write_bytes(b"<html>collision twin</html>")
+        dig.save_captures([
+            {"url": "http://x.com/", "timestamp": "20000101000000", "status": "200",
+             "mimetype": "text/html", "digest": "a", "fetch_state": "fetched",
+             "skip_reason": None, "sha1_fetched": "aa", "source": "id_",
+             "http_status": 200, "magic_ok": None, "error": None,
+             "raw_path": "raw/index.html", "path_collision": None},
+            {"url": "http://x.com/a/", "timestamp": "20000101000000", "status": "200",
+             "mimetype": "text/html", "digest": "b", "fetch_state": "fetched",
+             "skip_reason": None, "sha1_fetched": "bb", "source": "id_",
+             "http_status": 200, "magic_ok": None, "error": None,
+             "raw_path": "raw/a/index-1.html", "path_collision": True},
+        ])
+        return dig
+
+    def test_clean_mirrors_raw_paths_and_discloses_collisions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dig = self._dig_with_fetched(tmp)
+            summary = run_clean(dig)
+            self.assertEqual(summary["cleaned"], 2)
+            self.assertTrue((dig.site_dir / "index.html").exists())
+            self.assertTrue((dig.site_dir / "a" / "index-1.html").exists())  # site mirrors raw, no silent drop
+            ledger = (dig.root / "REWRITES.md").read_text()
+            self.assertIn("path collision", ledger)  # disclosed, not silent
+            self.assertIn("missing.html", summary["never_crawled"])
+
+    def test_clean_refuses_raw_path_escape(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dig = Dig.create(Path(tmp), "x.com")
+            dig.save_captures([
+                {"url": "http://x.com/evil", "timestamp": "20000101000000", "status": "200",
+                 "mimetype": "text/html", "digest": "e", "fetch_state": "fetched",
+                 "skip_reason": None, "sha1_fetched": None, "source": "id_",
+                 "http_status": 200, "magic_ok": None, "error": None,
+                 "raw_path": "../escaped.txt", "path_collision": None},
+            ])
+            summary = run_clean(dig)
+            self.assertEqual(summary["cleaned"], 1)
+            self.assertIn("ERROR: raw_path outside dig", (dig.root / "REWRITES.md").read_text())
+
+    def test_report_survives_directory_named_html(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dig = self._dig_with_fetched(tmp)
+            run_clean(dig)
+            (dig.site_dir / "weird.html").mkdir()  # a directory where a page should be
+            summary = run_report(dig)  # must not crash
+            self.assertEqual(summary["fetched"], 2)
 
 
 class TestResume(unittest.TestCase):
@@ -177,11 +363,13 @@ class TestResume(unittest.TestCase):
                 {"url": "http://x.com/a.html", "timestamp": "20000101000000", "status": "200",
                  "mimetype": "text/html", "digest": "a", "fetch_state": "fetched",
                  "skip_reason": None, "sha1_fetched": "aa", "source": "id_",
-                 "http_status": 200, "magic_ok": None, "error": None, "raw_path": "raw/a.html"},
+                 "http_status": 200, "magic_ok": None, "error": None,
+                 "raw_path": "raw/a.html", "path_collision": None},
                 {"url": "http://x.com/b.html", "timestamp": "20000101000000", "status": "200",
                  "mimetype": "text/html", "digest": "b", "fetch_state": "pending",
                  "skip_reason": None, "sha1_fetched": None, "source": None,
-                 "http_status": None, "magic_ok": None, "error": None},
+                 "http_status": None, "magic_ok": None, "error": None,
+                 "raw_path": None, "path_collision": None},
             ]
             dig.save_captures(caps)
 
@@ -189,10 +377,7 @@ class TestResume(unittest.TestCase):
                 assert "b.html" in str(request.url), "must not re-fetch already-fetched a.html"
                 return httpx.Response(200, content=b"<html>b</html>")
 
-            from excavate.pull import run_pull
-            summary = run_pull(dig, httpx.Client(transport=httpx.MockTransport(handler)),
-                               limiter=RateLimiter(sleep_fn=lambda s: None, clock=lambda: 0.0),
-                               sleep_fn=lambda s: None)
+            summary = run_pull(dig, mock_client(handler), limiter=no_wait_limiter(), sleep_fn=lambda s: None)
             self.assertEqual(summary["attempted"], 1)
             self.assertEqual(summary["fetched"], 1)
             states = {c["url"]: c["fetch_state"] for c in dig.load_captures()}

@@ -88,18 +88,18 @@ def sha1_hex(data: bytes) -> str:
 
 
 def safe_relpath(url: str) -> str:
-    """Map a URL to a filesystem-safe relative path under raw/ or site/.
+    """Map a URL to a filesystem-safe relative path.
 
-    Directory URLs (trailing slash or extensionless) map to <dir>/index.html —
-    the spec's directory→index rule.
+    CDX `original` is attacker-controllable (anyone can get an arbitrary URL
+    archived), so traversal/dot segments and control bytes are stripped — the
+    result is always a plain relative path that lands inside the target dir.
     """
-    path = unquote(urlsplit(url).path).lstrip("/")
+    path = unquote(urlsplit(url).path)
+    path = "".join(ch for ch in path if ord(ch) >= 32 and ch != "\x7f")
+    parts = [seg for seg in path.split("/") if seg not in ("", ".", "..")]
+    path = "/".join(parts)
     if not path:
         return "index.html"
-    if path.endswith("/"):
-        return path + "index.html"
-    name = path.rsplit("/", 1)[-1]
-    if "." not in name:
-        return path + "/index.html"
-    # strip anything path-hostile; keep unicode filenames as-is on disk
+    if "." not in path.rsplit("/", 1)[-1]:
+        path += "/index.html"
     return path

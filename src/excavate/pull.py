@@ -3,9 +3,16 @@
 Rules from the spec:
 - fetch via /web/<timestamp>id_/<url> (unrewritten); fall back to im_ on 404
 - <= 30 requests/minute sustained (observed ceiling ~60; we run at half)
-- exponential backoff on HTTP 429, fail the row after 3 attempts
+- exponential backoff on 429/5xx — 3 chances per row (total, across both
+  replay modes), then the row fails
 - magic-byte validation on every body — content-types lie
 - resumable: only fetch_state == pending rows; state persists after every row
+- dedupe is keyed by URL, not disk existence — resumed runs overwrite their
+  own path instead of forking -1/-2 copies
+
+Failure buckets are semantic: failed_4xx = permanent (404, 403, ...);
+failed_5xx = transient (server errors, 429-exhaustion, transport failures) —
+those are the ones a later resume run should retry.
 """
 
 from __future__ import annotations
@@ -17,9 +24,8 @@ import httpx
 from .dig import Dig, safe_relpath, sha1_hex
 
 REQUESTS_PER_MINUTE = 30
-BACKOFF_SCHEDULE = (30, 60, 120)  # seconds; then the row fails
+BACKOFF_SCHEDULE = (30, 60, 120)  # seconds; 3 chances per row, then it fails
 
-# signature -> human type; first match wins (None = unknown/plain text)
 MAGIC_SIGNATURES: tuple[tuple[bytes, str], ...] = (
     (b"\x89PNG", "png"),
     (b"GIF8", "gif"),
@@ -35,6 +41,7 @@ MAGIC_SIGNATURES: tuple[tuple[bytes, str], ...] = (
 EXTENSION_TYPES = {
     ".png": "png", ".gif": "gif", ".jpg": "jpeg", ".jpeg": "jpeg", ".pdf": "pdf",
     ".ogg": "ogg", ".oga": "ogg", ".mp3": "mp3", ".gz": "gzip", ".zip": "zip",
+    ".html": "html", ".htm": "html",
 }
 
 
@@ -42,6 +49,8 @@ class RateLimiter:
     """Min-interval throttle. `sleep_fn` is injectable for tests."""
 
     def __init__(self, per_minute: int = REQUESTS_PER_MINUTE, sleep_fn=time.sleep, clock=time.monotonic) -> None:
+        if per_minute <= 0:
+            raise ValueError("per_minute must be positive")
         self.min_interval = 60.0 / per_minute
         self._sleep = sleep_fn
         self._clock = clock
@@ -61,8 +70,7 @@ def sniff_type(data: bytes) -> str | None:
     for signature, kind in MAGIC_SIGNATURES:
         if data.startswith(signature):
             return kind
-    head = data[:512].lstrip()
-    if head[:1] == b"<":
+    if data[:512].lstrip()[:1] == b"<":
         return "html"
     return None
 
@@ -81,18 +89,6 @@ def _ext(path: str) -> str:
     return ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
 
 
-def _unique_path(directory, rel: str):
-    candidate = directory / rel
-    if not candidate.exists():
-        return candidate
-    stem, suffix = candidate.stem, candidate.suffix
-    for i in range(1, 1000):
-        alt = candidate.with_name(f"{stem}-{i}{suffix}")
-        if not alt.exists():
-            return alt
-    raise RuntimeError(f"path collision exhausted for {rel}")
-
-
 def _replay_urls(capture: dict) -> list[tuple[str, str]]:
     base = f"https://web.archive.org/web/{capture['timestamp']}"
     return [
@@ -101,30 +97,44 @@ def _replay_urls(capture: dict) -> list[tuple[str, str]]:
     ]
 
 
+def _fail(capture: dict, last_status: int | None, error: str) -> dict:
+    transient = last_status is None or last_status >= 500 or last_status == 429
+    capture.update(
+        fetch_state="failed_5xx" if transient else "failed_4xx",
+        error=error,
+    )
+    return capture
+
+
 def fetch_one(capture: dict, client: httpx.Client, limiter: RateLimiter, sleep_fn=time.sleep) -> dict:
-    """Fetch a single capture; returns the mutated capture dict (never raises)."""
-    last_error = None
+    """Fetch a single capture; returns the mutated capture dict (never raises).
+
+    Retries with backoff apply to transient statuses (429, 5xx) only, on a
+    budget of 3 sleeps per row shared across both replay modes. Permanent 4xx
+    (404 etc.) gets no same-mode retry — it falls through to the other mode.
+    """
+    backoff_budget = list(BACKOFF_SCHEDULE)
+    last_status: int | None = None
+    last_error = "no attempts made"
+
     for url, source in _replay_urls(capture):
-        for attempt, backoff in enumerate((*BACKOFF_SCHEDULE, None)):
+        while True:
             limiter.wait()
             try:
                 response = client.get(url)
             except httpx.HTTPError as exc:
                 last_error = f"{source}: transport {exc!r}"
-                break  # transport error → try the other replay mode
-            if response.status_code == 429:
-                last_error = f"{source}: 429 (attempt {attempt + 1})"
-                if backoff is not None:
-                    sleep_fn(backoff)
-                    continue
-                break  # backoff exhausted → other mode / give up
-            if response.status_code >= 500:
+                break  # try the other replay mode
+            last_status = response.status_code
+            if response.status_code == 429 or response.status_code >= 500:
                 last_error = f"{source}: {response.status_code}"
-                break  # IA 5xx is rare and transient; try the other replay mode
+                if backoff_budget:
+                    sleep_fn(backoff_budget.pop(0))
+                    continue
+                return _fail(capture, last_status, last_error)  # budget exhausted
             if response.status_code >= 400:
                 last_error = f"{source}: {response.status_code}"
-                break  # 404 etc → try the other replay mode
-            # success
+                break  # permanent for this mode; try the other
             capture.update(
                 fetch_state="fetched",
                 source=source,
@@ -135,28 +145,65 @@ def fetch_one(capture: dict, client: httpx.Client, limiter: RateLimiter, sleep_f
                 _body=response.content,
             )
             return capture
-        # 429-exhausted or 5xx on this mode; fall through to the other mode
-    capture.update(fetch_state="failed_4xx" if "429" in (last_error or "") else "failed_5xx",
-                   error=last_error)
-    return capture
+    return _fail(capture, last_status, last_error)
+
+
+def _claim_path(claimed: dict[str, str], rel: str, url: str) -> tuple[str, bool]:
+    """Reserve `rel` for `url`. Returns (path, collision) — collision means a
+    different URL already owns the canonical name and this one gets a suffix."""
+    owner = claimed.get(rel)
+    if owner is None or owner == url:
+        claimed[rel] = url
+        return rel, False
+    stem, _, suffix = rel.rpartition(".")
+    if not stem:
+        stem, suffix = rel, ""
+    else:
+        suffix = "." + suffix
+    for i in range(1, 1000):
+        alt = f"{stem}-{i}{suffix}"
+        if alt not in claimed:
+            claimed[alt] = url
+            return alt, True
+    raise RuntimeError(f"path collision exhausted for {rel}")
 
 
 def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
              limiter: RateLimiter | None = None, sleep_fn=time.sleep) -> dict:
     limiter = limiter or RateLimiter(sleep_fn=sleep_fn)
     captures = dig.load_captures()
+
+    # rebuild path claims from existing state — dedupe key is the URL, so a
+    # resumed run overwrites its own file instead of forking -1/-2 copies
+    claimed: dict[str, str] = {}
+    for cap in captures:
+        if cap.get("raw_path"):
+            claimed[cap["raw_path"][len("raw/"):]] = cap["url"]
+
     todo = [c for c in captures if c["fetch_state"] == "pending"]
     if limit is not None:
         todo = todo[:limit]
     fetched = failed = 0
     for capture in todo:
+        prev_rel = capture.get("raw_path")
+        prev_rel = prev_rel[len("raw/"):] if prev_rel and prev_rel.startswith("raw/") else None
+        prev_collision = bool(capture.get("path_collision"))
+        capture.update(sha1_fetched=None, source=None, http_status=None,
+                       magic_ok=None, error=None, path_collision=None)
         result = fetch_one(capture, client, limiter, sleep_fn=sleep_fn)
         body = result.pop("_body", None)
         if result["fetch_state"] == "fetched" and body is not None:
-            target = _unique_path(dig.raw_dir, safe_relpath(result["url"]))
+            if prev_rel and claimed.get(prev_rel) == result["url"]:
+                # resumed row: reuse its own path (overwrites in place, no forks)
+                rel, collision = prev_rel, prev_collision
+                claimed[rel] = result["url"]
+            else:
+                rel, collision = _claim_path(claimed, safe_relpath(result["url"]), result["url"])
+            target = dig.raw_dir / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(body)
-            result["raw_path"] = str(target.relative_to(dig.root))
+            result["raw_path"] = f"raw/{rel}"
+            result["path_collision"] = collision or None
             fetched += 1
         else:
             failed += 1

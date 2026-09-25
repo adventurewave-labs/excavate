@@ -6,6 +6,8 @@ Commands and contracts: docs/specs/M0-resurrection-cli.md
 from __future__ import annotations
 
 import argparse
+import json
+import re
 import sys
 from pathlib import Path
 
@@ -20,6 +22,7 @@ from .report import run_report
 
 USER_AGENT = f"excavate/{__version__} (digital-archaeology; respectful rate budget)"
 DEFAULT_DIG_BASE = "digs"
+DOMAIN_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$")
 
 
 def _client() -> httpx.Client:
@@ -30,13 +33,21 @@ def _client() -> httpx.Client:
     )
 
 
-def _dig_arg(value: str | None) -> Dig:
-    return Dig(Path(value)) if value else Dig.latest(Path(DEFAULT_DIG_BASE))
+def _open_dig(value: str | None) -> Dig:
+    if value:
+        dig = Dig(Path(value))
+        if not (dig.root / "captures.json").exists():
+            raise SystemExit(f"not a dig directory (no captures.json): {value}")
+        return dig
+    return Dig.latest(Path(DEFAULT_DIG_BASE))
 
 
 def cmd_inventory(args: argparse.Namespace) -> int:
+    if not DOMAIN_RE.match(args.domain):
+        raise SystemExit(f"not a plain domain: {args.domain!r} (no paths, no wildcards)")
     dig = Dig.create(Path(args.output or DEFAULT_DIG_BASE), args.domain)
-    summary = run_inventory(args.domain, dig, _client())
+    with _client() as client:
+        summary = run_inventory(args.domain, dig, client)
     print(
         f"inventoried {summary['domain']}: {summary['raw_rows']} raw CDX rows → "
         f"{summary['unique_urls']} unique URLs ({summary['pending']} pending, {summary['skipped']} skipped)"
@@ -46,20 +57,23 @@ def cmd_inventory(args: argparse.Namespace) -> int:
 
 
 def cmd_pull(args: argparse.Namespace) -> int:
-    dig = _dig_arg(args.dig)
-    summary = run_pull(dig, _client(), limit=args.limit)
+    dig = _open_dig(args.dig)
+    limiter = RateLimiter()  # explicit: the budget is a product feature
+    with _client() as client:
+        summary = run_pull(dig, client, limit=args.limit, limiter=limiter)
     totals = summary["totals"]
+    failed_transient = totals.get("failed_5xx", 0)
     print(
         f"pull: {summary['fetched']} fetched, {summary['failed']} failed this run | "
         f"totals: {totals.get('fetched', 0)} fetched, {totals.get('pending', 0)} pending, "
-        f"{totals.get('failed_4xx', 0) + totals.get('failed_5xx', 0)} failed "
+        f"{totals.get('failed_4xx', 0)} permanent, {failed_transient} transient "
         f"(budget {REQUESTS_PER_MINUTE}/min)"
     )
     return 0 if summary["failed"] == 0 else 1
 
 
 def cmd_clean(args: argparse.Namespace) -> int:
-    dig = _dig_arg(args.dig)
+    dig = _open_dig(args.dig)
     summary = run_clean(dig)
     print(
         f"clean: {summary['cleaned']} files → {dig.site_dir}, "
@@ -70,14 +84,14 @@ def cmd_clean(args: argparse.Namespace) -> int:
 
 
 def cmd_report(args: argparse.Namespace) -> int:
-    dig = _dig_arg(args.dig)
+    dig = _open_dig(args.dig)
     summary = run_report(dig)
     print(f"report: {dig.root / 'VERIFICATION-REPORT.md'}")
     print(
         f"  {summary['raw_rows']} raw rows / {summary['unique_urls']} URLs / "
-        f"{summary['fetched']} fetched / {summary['failed']} failed / "
-        f"{summary['skipped']} skipped / {summary['never_crawled']} never-crawled / "
-        f"{summary['rewrites']} rewrites"
+        f"{summary['fetched']} fetched / {summary['failed_permanent']} permanent failures / "
+        f"{summary['failed_transient']} transient failures / {summary['skipped']} skipped / "
+        f"{summary['never_crawled']} never-crawled / {summary['rewrites']} rewrites"
     )
     return 0
 
@@ -106,7 +120,17 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_report)
 
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except httpx.HTTPError as exc:
+        print(f"network error: {exc}", file=sys.stderr)
+        return 1
+    except (FileNotFoundError, json.JSONDecodeError, KeyError) as exc:
+        print(
+            f"dig state missing or corrupt ({exc!r}) — run `excavate inventory <domain>` first",
+            file=sys.stderr,
+        )
+        return 1
 
 
 if __name__ == "__main__":

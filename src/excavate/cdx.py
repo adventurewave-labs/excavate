@@ -2,54 +2,65 @@
 
 manifest.csv keeps EVERY raw row (the strops invariant: row count is never
 reduced by filtering). captures.json resolves each unique URL to its best
-surviving capture — the thing `pull` works through.
+surviving capture — the thing `pull` works through. Re-running inventory
+MERGES into existing state rather than wiping it (fetch results survive).
 """
 
 from __future__ import annotations
 
 import httpx
 
-CDX_API = "https://web.archive.org/cdx/search/cdx"
+from .dig import Dig
 
-# CDX JSON reply: first row is the header, remaining rows are captures.
-FIELDS = ("urlkey", "timestamp", "original", "mimetype", "statuscode", "digest", "length")
+CDX_API = "https://web.archive.org/cdx/search/cdx"
 
 REVISIT_MIMETYPE = "warc/revisit"
 
+_STATE_FIELDS = ("fetch_state", "sha1_fetched", "source", "http_status",
+                 "magic_ok", "error", "raw_path", "skip_reason", "path_collision")
+
 
 def fetch_cdx_rows(domain: str, client: httpx.Client) -> list[dict]:
-    """Query the CDX API for url=<domain>* — one request, raw rows only."""
+    """Query the CDX API for url=<domain>* — one request, raw rows only.
+
+    Ragged rows (length != header) are skipped: the CDX API occasionally
+    returns error/not-found lines that must not crash the inventory.
+    """
     response = client.get(CDX_API, params={"url": f"{domain}*", "output": "json"})
     response.raise_for_status()
     payload = response.json()
     if not payload:
         return []
     header, *rows = payload
-    return [dict(zip(header, row)) for row in rows]
+    return [dict(zip(header, row)) for row in rows if len(row) == len(header)]
+
+
+def _rank(row: dict) -> tuple:
+    """Higher wins: has-content 2xx beats revisit beats error; newer beats older."""
+    status = str(row.get("statuscode", ""))
+    has_content = row.get("mimetype") != REVISIT_MIMETYPE and status.startswith("2")
+    return (has_content, status.startswith("2"), row.get("timestamp", ""))
 
 
 def resolve_best(rows: list[dict]) -> list[dict]:
-    """Best surviving capture per original URL: 2xx with content, newest wins.
-
-    Revisit records (mimetype warc/revisit) carry no body — usable as a tiebreak
-    on existence but never as the fetch target.
-    """
+    """Best surviving capture per original URL: 2xx with content, newest wins."""
     best: dict[str, dict] = {}
     for row in rows:
-        url = row["original"]
-        rank = _rank(row)
-        if url not in best or rank > _rank(best[url]):
+        url = row.get("original")
+        if not url:
+            continue
+        if url not in best or _rank(row) > _rank(best[url]):
             best[url] = row
     caps = []
     for url, row in best.items():
-        fetchable = row["mimetype"] != REVISIT_MIMETYPE and str(row["statuscode"]).startswith("2")
+        fetchable = row.get("mimetype") != REVISIT_MIMETYPE and str(row.get("statuscode", "")).startswith("2")
         caps.append(
             {
                 "url": url,
-                "timestamp": row["timestamp"],
-                "status": row["statuscode"],
-                "mimetype": row["mimetype"],
-                "digest": row["digest"],
+                "timestamp": row.get("timestamp", ""),
+                "status": row.get("statuscode", ""),
+                "mimetype": row.get("mimetype", ""),
+                "digest": row.get("digest", ""),
                 "fetch_state": "pending" if fetchable else "skipped",
                 "skip_reason": None if fetchable else _skip_reason(row),
                 "sha1_fetched": None,
@@ -57,35 +68,46 @@ def resolve_best(rows: list[dict]) -> list[dict]:
                 "http_status": None,
                 "magic_ok": None,
                 "error": None,
+                "raw_path": None,
+                "path_collision": None,
             }
         )
     caps.sort(key=lambda c: c["url"])
     return caps
 
 
-def _rank(row: dict) -> tuple:
-    """Higher wins: has-content beats revisit beats error; newer beats older."""
-    has_content = row["mimetype"] != REVISIT_MIMETYPE and str(row["statuscode"]).startswith("2")
-    ok_status = str(row["statuscode"]).startswith("2")
-    return (has_content, ok_status, row["timestamp"])
-
-
 def _skip_reason(row: dict) -> str:
-    if row["mimetype"] == REVISIT_MIMETYPE:
+    if row.get("mimetype") == REVISIT_MIMETYPE:
         return "revisit-only (no body in CDX)"
-    return f"best capture status {row['statuscode']}"
+    return f"best capture status {row.get('statuscode', '?')}"
 
 
-def run_inventory(domain: str, dig, client: httpx.Client) -> dict:
-    rows = fetch_cdx_rows(domain, client)
+def apply_inventory(dig: Dig, rows: list[dict]) -> dict:
+    """Persist raw rows + resolved captures, MERGING into existing state.
+
+    A URL whose best capture is unchanged (same timestamp) keeps its fetch
+    results; a re-resolved URL (different timestamp) resets to pending — the
+    previously downloaded bytes belong to a different capture.
+    """
     caps = resolve_best(rows)
+    if (dig.root / "captures.json").exists():
+        existing = {c["url"]: c for c in dig.load_captures()}
+        for cap in caps:
+            prev = existing.get(cap["url"])
+            if prev and prev.get("timestamp") == cap["timestamp"]:
+                for field in _STATE_FIELDS:
+                    cap[field] = prev.get(field)
     dig.write_raw_manifest(rows)
     dig.save_captures(caps)
     pending = sum(1 for c in caps if c["fetch_state"] == "pending")
     return {
-        "domain": domain,
+        "domain": dig.domain,
         "raw_rows": len(rows),
         "unique_urls": len(caps),
         "pending": pending,
         "skipped": len(caps) - pending,
     }
+
+
+def run_inventory(domain: str, dig: Dig, client: httpx.Client) -> dict:
+    return apply_inventory(dig, fetch_cdx_rows(domain, client))
