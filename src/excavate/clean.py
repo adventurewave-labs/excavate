@@ -182,22 +182,34 @@ def _resolve_raw(dig: Dig, capture: dict) -> Path | None:
     return raw_file
 
 
-def run_clean(dig: Dig) -> dict:
-    domain = dig.domain
-    captures = [c for c in dig.load_captures() if c["fetch_state"] == "fetched" and c.get("raw_path")]
-    all_log: list[str] = []
-    internal: set[str] = set()
+def effective_pulled(dig: Dig, captures: list[dict]) -> tuple[set[str], list[dict], list[str]]:
+    """Paths actually present in raw/ for fetched captures.
 
-    # pre-validate reads: only captures with a real, in-dig raw file contribute
-    # to `pulled` — a phantom path here would make links resolve to nothing
+    Shared by clean and report so both agree: only captures with a real,
+    in-dig raw file count as pulled. Returns (pulled_paths, valid_captures,
+    error_lines).
+    """
     valid: list[dict] = []
+    errors: list[str] = []
     for capture in captures:
+        if capture.get("fetch_state") != "fetched" or not capture.get("raw_path"):
+            continue
         raw_file = _resolve_raw(dig, capture)
         if raw_file is not None and raw_file.is_file():
             valid.append(capture)
         else:
-            all_log.append(f"- ERROR: raw file missing or outside dig for `{capture['url']}` — skipped")
-    pulled = {site_rel(c) for c in valid}
+            errors.append(f"- ERROR: raw file missing or outside dig for `{capture['url']}` — skipped")
+    return {site_rel(c) for c in valid}, valid, errors
+
+
+def run_clean(dig: Dig) -> dict:
+    domain = dig.domain
+    captures = dig.load_captures()
+    all_log: list[str] = []
+    internal: set[str] = set()
+
+    pulled, valid, errors = effective_pulled(dig, captures)
+    all_log.extend(errors)
 
     # full re-clean: wipe stale output so no orphan survives from earlier runs
     if dig.site_dir.exists():

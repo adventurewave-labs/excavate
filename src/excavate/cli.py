@@ -125,14 +125,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except (httpx.HTTPError, ValueError) as exc:
-        print(f"network/data error: {exc}", file=sys.stderr)
-        return 1
     except (FileNotFoundError, json.JSONDecodeError, KeyError) as exc:
         print(
             f"dig state missing or corrupt ({exc!r}) — run `excavate inventory <domain>` first",
             file=sys.stderr,
         )
+        return 1
+    except (httpx.HTTPError, ValueError) as exc:
+        print(f"network/data error: {exc}", file=sys.stderr)
         return 1
 
 

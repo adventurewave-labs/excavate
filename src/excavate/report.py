@@ -9,15 +9,14 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from .clean import _decode, internal_targets, site_rel
+from .clean import _decode, effective_pulled, internal_targets, site_rel
 from .dig import Dig
 
 REWRITE_LINE = re.compile(r"^- `.*` → `.*` \(")
-COLLISION_LINE = re.compile(r"^- (path collision|wayback chrome removed|ERROR)")
 
 
 def _never_crawled(dig: Dig, captures: list[dict]) -> list[str]:
-    pulled = {site_rel(c) for c in captures}
+    pulled, _, _ = effective_pulled(dig, captures)  # same validity rule as clean
     targets: set[str] = set()
     for page in dig.site_dir.rglob("*"):
         if page.is_file() and page.suffix.lower() in (".html", ".htm", ".css"):

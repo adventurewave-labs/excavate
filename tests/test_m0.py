@@ -378,6 +378,9 @@ class TestCleanAndReport(unittest.TestCase):
             self.assertIn("ghost/index.html", summary["never_crawled"])
             self.assertFalse((dig.site_dir / "ghost").exists())
             self.assertIn("ERROR: raw file missing", (dig.root / "REWRITES.md").read_text())
+            # report agrees with clean (same validity rule) — no phantom pulled set
+            report = run_report(dig)
+            self.assertGreaterEqual(report["never_crawled"], 1)
 
     def test_report_survives_directory_named_html(self):
         with tempfile.TemporaryDirectory() as tmp:
