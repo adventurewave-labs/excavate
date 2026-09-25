@@ -9,10 +9,8 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from .clean import _decode, effective_pulled, internal_targets, site_rel
+from .clean import REWRITE_LINE, _decode, effective_pulled, internal_targets, site_rel
 from .dig import Dig
-
-REWRITE_LINE = re.compile(r"^- `.*` → `.*` \(")
 
 
 def _never_crawled(dig: Dig, captures: list[dict]) -> list[str]:

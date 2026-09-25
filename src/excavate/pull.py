@@ -114,6 +114,7 @@ def fetch_one(capture: dict, client: httpx.Client, limiter: RateLimiter, sleep_f
     (404 etc.) gets no same-mode retry — it falls through to the other mode.
     """
     backoff_budget = list(BACKOFF_SCHEDULE)
+    backoff_used = False
     last_status: int | None = None
     last_error = "no attempts made"
     transport_last = False  # the final attempt died before an HTTP answer
@@ -132,6 +133,7 @@ def fetch_one(capture: dict, client: httpx.Client, limiter: RateLimiter, sleep_f
             if response.status_code == 429 or response.status_code >= 500:
                 last_error = f"{source}: {response.status_code}"
                 if backoff_budget:
+                    backoff_used = True
                     sleep_fn(backoff_budget.pop(0))
                     continue
                 return _fail(capture, last_status, last_error)  # budget exhausted
@@ -148,7 +150,9 @@ def fetch_one(capture: dict, client: httpx.Client, limiter: RateLimiter, sleep_f
                 _body=response.content,
             )
             return capture
-    transient = transport_last or last_status is None or last_status >= 500 or last_status == 429
+    # a 4xx observed while under throttle pressure isn't trustworthy as permanent
+    transient = (transport_last or last_status is None or last_status >= 500
+                 or last_status == 429 or (backoff_used and last_status is not None and last_status >= 400))
     capture.update(
         fetch_state="failed_5xx" if transient else "failed_4xx",
         error=last_error,

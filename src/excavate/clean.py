@@ -34,6 +34,10 @@ CSS_URL = re.compile(r"""url\((?P<q>["']?)(?P<url>[^"')]+)(?P=q)\)""")
 TEXT_SUFFIXES = (".html", ".htm", ".css")
 _SKIP_PREFIXES = ("#", "mailto:", "tel:", "javascript:", "data:")
 
+# a "rewrite" proper: `before` → `after` — chrome strips, collision notes and
+# ERROR lines are disclosed in the ledger but counted separately
+REWRITE_LINE = re.compile(r"^- `.*` → `.*` \(")
+
 
 def same_site_host(host: str, domain: str) -> bool:
     """www. variants of the inventory domain are the same site."""
@@ -240,4 +244,5 @@ def run_clean(dig: Dig) -> dict:
         encoding="utf-8",
     )
     never_crawled = sorted(t for t in internal if t not in pulled and t != "")
-    return {"cleaned": len(valid), "rewrites": len(all_log), "never_crawled": never_crawled}
+    rewrites = sum(1 for line in all_log if REWRITE_LINE.match(line))
+    return {"cleaned": len(valid), "rewrites": rewrites, "never_crawled": never_crawled}

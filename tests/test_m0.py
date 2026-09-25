@@ -408,6 +408,9 @@ class TestCleanAndReport(unittest.TestCase):
             # report agrees with clean (same validity rule) — no phantom pulled set
             report = run_report(dig)
             self.assertGreaterEqual(report["never_crawled"], 1)
+            # and both count rewrites by the same rule — no contradictory prints
+            clean_summary = run_clean(dig)
+            self.assertEqual(clean_summary["rewrites"], run_report(dig)["rewrites"])
 
     def test_report_survives_directory_named_html(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -441,6 +444,19 @@ class TestResume(unittest.TestCase):
             self.assertEqual(cap["fetch_state"], "failed_4xx")
             self.assertIsNone(cap["raw_path"])  # state no longer points at stale bytes
             self.assertFalse(raw.exists())  # and the stale file is gone
+
+    def test_429_then_404s_is_transient(self):
+        # a 404 observed while throttled is not trustworthy as permanent
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return httpx.Response(429, content=b"slow")
+            return httpx.Response(404, content=b"gone")
+
+        result = fetch_one(fresh_capture(), mock_client(handler), no_wait_limiter(), sleep_fn=lambda s: None)
+        self.assertEqual(result["fetch_state"], "failed_5xx")
 
     def test_local_write_failure_fails_row_and_continues(self):
         with tempfile.TemporaryDirectory() as tmp:
