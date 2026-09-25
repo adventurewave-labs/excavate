@@ -200,8 +200,17 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
             else:
                 rel, collision = _claim_path(claimed, safe_relpath(result["url"]), result["url"])
             target = dig.raw_dir / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(body)
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(body)
+            except OSError as exc:
+                # filesystem limits etc. — fail the row, never wedge the run
+                result.update(fetch_state="failed_4xx", error=f"local write failed: {exc}",
+                              raw_path=None, path_collision=None)
+                claimed.pop(rel, None)
+                failed += 1
+                dig.save_captures(captures)
+                continue
             result["raw_path"] = f"raw/{rel}"
             result["path_collision"] = collision or None
             fetched += 1

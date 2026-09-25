@@ -185,20 +185,27 @@ def _resolve_raw(dig: Dig, capture: dict) -> Path | None:
 def run_clean(dig: Dig) -> dict:
     domain = dig.domain
     captures = [c for c in dig.load_captures() if c["fetch_state"] == "fetched" and c.get("raw_path")]
-    pulled = {site_rel(c) for c in captures}
     all_log: list[str] = []
     internal: set[str] = set()
+
+    # pre-validate reads: only captures with a real, in-dig raw file contribute
+    # to `pulled` — a phantom path here would make links resolve to nothing
+    valid: list[dict] = []
+    for capture in captures:
+        raw_file = _resolve_raw(dig, capture)
+        if raw_file is not None and raw_file.is_file():
+            valid.append(capture)
+        else:
+            all_log.append(f"- ERROR: raw file missing or outside dig for `{capture['url']}` — skipped")
+    pulled = {site_rel(c) for c in valid}
 
     # full re-clean: wipe stale output so no orphan survives from earlier runs
     if dig.site_dir.exists():
         shutil.rmtree(dig.site_dir)
     dig.site_dir.mkdir(parents=True, exist_ok=True)
 
-    for capture in captures:
+    for capture in valid:
         raw_file = _resolve_raw(dig, capture)
-        if raw_file is None:
-            all_log.append(f"- ERROR: raw_path outside dig for `{capture['url']}` — skipped")
-            continue
         rel = site_rel(capture)
         target = dig.site_dir / rel
         target.parent.mkdir(parents=True, exist_ok=True)

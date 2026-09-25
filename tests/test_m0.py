@@ -275,6 +275,16 @@ class TestSafeRelpath(unittest.TestCase):
     def test_control_bytes_stripped(self):
         self.assertEqual(safe_relpath("http://x.com/a\x00b.html"), "ab.html")
 
+    def test_long_segments_truncated_unique_and_fs_safe(self):
+        long_a = "a" * 300 + ".png"
+        long_b = "b" * 300 + ".png"
+        rel_a = safe_relpath(f"http://x.com/{long_a}")
+        rel_b = safe_relpath(f"http://x.com/{long_b}")
+        self.assertTrue(all(len(part) < 200 for part in rel_a.split("/")))  # fs limits
+        self.assertNotEqual(rel_a, rel_b)  # truncation is hash-disambiguated
+        self.assertTrue(rel_a.endswith(".png"))  # extension survives
+        Path(rel_a)  # constructible as a path without raising
+
 
 class TestPathCollision(unittest.TestCase):
     def test_url_keyed_dedupe_and_resume_no_fork(self):
@@ -344,7 +354,30 @@ class TestCleanAndReport(unittest.TestCase):
             ])
             summary = run_clean(dig)
             self.assertEqual(summary["cleaned"], 1)
-            self.assertIn("ERROR: raw_path outside dig", (dig.root / "REWRITES.md").read_text())
+            self.assertIn("ERROR: raw file missing or outside dig", (dig.root / "REWRITES.md").read_text())
+
+    def test_missing_raw_file_not_phantom_in_pulled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dig = Dig.create(Path(tmp), "x.com")
+            # real page links to ghost/index.html; ghost capture claims bytes that don't exist
+            (dig.raw_dir / "index.html").write_bytes(b'<a href="/ghost/index.html">g</a>')
+            dig.save_captures([
+                {"url": "http://x.com/", "timestamp": "20000101000000", "status": "200",
+                 "mimetype": "text/html", "digest": "a", "fetch_state": "fetched",
+                 "skip_reason": None, "sha1_fetched": "aa", "source": "id_",
+                 "http_status": 200, "magic_ok": None, "error": None,
+                 "raw_path": "raw/index.html", "path_collision": None},
+                {"url": "http://x.com/ghost/index.html", "timestamp": "20000101000000", "status": "200",
+                 "mimetype": "text/html", "digest": "g", "fetch_state": "fetched",
+                 "skip_reason": None, "sha1_fetched": "gg", "source": "id_",
+                 "http_status": 200, "magic_ok": None, "error": None,
+                 "raw_path": "raw/ghost/index.html", "path_collision": None},  # file never written
+            ])
+            summary = run_clean(dig)
+            # the ghost must NOT count as pulled — its link stays honestly never-crawled
+            self.assertIn("ghost/index.html", summary["never_crawled"])
+            self.assertFalse((dig.site_dir / "ghost").exists())
+            self.assertIn("ERROR: raw file missing", (dig.root / "REWRITES.md").read_text())
 
     def test_report_survives_directory_named_html(self):
         with tempfile.TemporaryDirectory() as tmp:

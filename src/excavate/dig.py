@@ -91,15 +91,29 @@ def safe_relpath(url: str) -> str:
     """Map a URL to a filesystem-safe relative path.
 
     CDX `original` is attacker-controllable (anyone can get an arbitrary URL
-    archived), so traversal/dot segments and control bytes are stripped — the
-    result is always a plain relative path that lands inside the target dir.
+    archived), so traversal/dot segments and control bytes are stripped, and
+    path segments are capped well under filesystem limits (255 bytes/segment).
+    The result is always a plain relative path inside the target directory.
     """
     path = unquote(urlsplit(url).path)
     path = "".join(ch for ch in path if ord(ch) >= 32 and ch != "\x7f")
     parts = [seg for seg in path.split("/") if seg not in ("", ".", "..")]
+    parts = [_shorten_segment(seg) for seg in parts]
     path = "/".join(parts)
     if not path:
         return "index.html"
     if "." not in path.rsplit("/", 1)[-1]:
         path += "/index.html"
     return path
+
+
+def _shorten_segment(segment: str, limit: int = 180) -> str:
+    """Cap one path segment, preserving a short extension and disambiguating
+    the truncation with a content hash (two long names must not collide)."""
+    if len(segment) <= limit:
+        return segment
+    digest = hashlib.sha1(segment.encode()).hexdigest()[:8]
+    stem, dot, ext = segment.rpartition(".")
+    if dot and len(ext) <= 10:
+        return f"{stem[: limit - 11 - len(ext)]}-{digest}.{ext}"
+    return f"{segment[: limit - 9]}-{digest}"
