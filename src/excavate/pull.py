@@ -116,6 +116,7 @@ def fetch_one(capture: dict, client: httpx.Client, limiter: RateLimiter, sleep_f
     backoff_budget = list(BACKOFF_SCHEDULE)
     last_status: int | None = None
     last_error = "no attempts made"
+    transport_last = False  # the final attempt died before an HTTP answer
 
     for url, source in _replay_urls(capture):
         while True:
@@ -124,7 +125,9 @@ def fetch_one(capture: dict, client: httpx.Client, limiter: RateLimiter, sleep_f
                 response = client.get(url)
             except httpx.HTTPError as exc:
                 last_error = f"{source}: transport {exc!r}"
+                transport_last = True
                 break  # try the other replay mode
+            transport_last = False
             last_status = response.status_code
             if response.status_code == 429 or response.status_code >= 500:
                 last_error = f"{source}: {response.status_code}"
@@ -145,7 +148,12 @@ def fetch_one(capture: dict, client: httpx.Client, limiter: RateLimiter, sleep_f
                 _body=response.content,
             )
             return capture
-    return _fail(capture, last_status, last_error)
+    transient = transport_last or last_status is None or last_status >= 500 or last_status == 429
+    capture.update(
+        fetch_state="failed_5xx" if transient else "failed_4xx",
+        error=last_error,
+    )
+    return capture
 
 
 def _claim_path(claimed: dict[str, str], rel: str, url: str) -> tuple[str, bool]:

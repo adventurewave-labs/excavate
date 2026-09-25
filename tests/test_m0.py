@@ -168,6 +168,16 @@ class TestPullClassification(unittest.TestCase):
         result = fetch_one(fresh_capture(), mock_client(handler), no_wait_limiter(), sleep_fn=lambda s: None)
         self.assertEqual(result["fetch_state"], "failed_5xx")
 
+    def test_transport_on_im_fallback_after_404_is_transient(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "id_" in str(request.url):
+                return httpx.Response(404, content=b"gone")
+            raise httpx.ConnectError("died mid-fallback")
+
+        result = fetch_one(fresh_capture(), mock_client(handler), no_wait_limiter(), sleep_fn=lambda s: None)
+        # the row never finished its fallback attempt — resume must retry it
+        self.assertEqual(result["fetch_state"], "failed_5xx")
+
     def test_429_backoff_then_success(self):
         calls = {"n": 0}
 
