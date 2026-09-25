@@ -122,8 +122,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except httpx.HTTPError as exc:
-        print(f"network error: {exc}", file=sys.stderr)
+    except (httpx.HTTPError, ValueError) as exc:
+        print(f"network/data error: {exc}", file=sys.stderr)
         return 1
     except (FileNotFoundError, json.JSONDecodeError, KeyError) as exc:
         print(

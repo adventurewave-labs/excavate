@@ -206,6 +206,15 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
             result["path_collision"] = collision or None
             fetched += 1
         else:
+            # failed (re-)fetch: any previously-fetched bytes no longer correspond
+            # to this row's state — drop the association and the file
+            if prev_rel and claimed.get(prev_rel) == result["url"]:
+                old = dig.raw_dir / prev_rel
+                if old.exists():
+                    old.unlink()
+                claimed.pop(prev_rel, None)
+            result["raw_path"] = None
+            result["path_collision"] = None
             failed += 1
         dig.save_captures(captures)  # persist after every row — kill-safe
     counts = {state: sum(1 for c in captures if c["fetch_state"] == state)

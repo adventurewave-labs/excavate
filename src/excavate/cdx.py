@@ -29,8 +29,9 @@ def fetch_cdx_rows(domain: str, client: httpx.Client) -> list[dict]:
     response = client.get(CDX_API, params={"url": f"{domain}*", "output": "json"})
     response.raise_for_status()
     payload = response.json()
-    if not payload:
-        return []
+    if not isinstance(payload, list) or not payload or not isinstance(payload[0], list):
+        # CDX error replies are JSON objects or plain strings — never a quiet empty dig
+        raise ValueError(f"malformed CDX payload (got {type(payload).__name__})")
     header, *rows = payload
     return [dict(zip(header, row)) for row in rows if len(row) == len(header)]
 
@@ -90,6 +91,8 @@ def apply_inventory(dig: Dig, rows: list[dict]) -> dict:
     previously downloaded bytes belong to a different capture.
     """
     caps = resolve_best(rows)
+    if not caps:
+        raise SystemExit("CDX returned zero usable rows — refusing to write an empty inventory")
     if (dig.root / "captures.json").exists():
         existing = {c["url"]: c for c in dig.load_captures()}
         for cap in caps:

@@ -356,6 +356,44 @@ class TestCleanAndReport(unittest.TestCase):
 
 
 class TestResume(unittest.TestCase):
+    def test_failed_refetch_clears_stale_raw_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dig = Dig.create(Path(tmp), "x.com")
+            raw = dig.raw_dir / "a.html"
+            raw.write_bytes(b"<html>old bytes</html>")
+            dig.save_captures([
+                {"url": "http://x.com/a.html", "timestamp": "20000101000000", "status": "200",
+                 "mimetype": "text/html", "digest": "a", "fetch_state": "pending",
+                 "skip_reason": None, "sha1_fetched": None, "source": None,
+                 "http_status": None, "magic_ok": None, "error": None,
+                 "raw_path": "raw/a.html", "path_collision": None},
+            ])
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                return httpx.Response(404, content=b"gone")
+
+            summary = run_pull(dig, mock_client(handler), limiter=no_wait_limiter(), sleep_fn=lambda s: None)
+            self.assertEqual(summary["failed"], 1)
+            cap = dig.load_captures()[0]
+            self.assertEqual(cap["fetch_state"], "failed_4xx")
+            self.assertIsNone(cap["raw_path"])  # state no longer points at stale bytes
+            self.assertFalse(raw.exists())  # and the stale file is gone
+
+    def test_malformed_cdx_payload_rejected(self):
+        from excavate.cdx import fetch_cdx_rows
+
+        for garbage in ({"error": "no results"}, "plain string", []):
+            with self.subTest(garbage=garbage):
+                client = mock_client(lambda r, g=garbage: httpx.Response(200, json=g))
+                with self.assertRaises(ValueError):
+                    fetch_cdx_rows("x.com", client)
+
+    def test_zero_usable_rows_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dig = Dig.create(Path(tmp), "x.com")
+            with self.assertRaises(SystemExit):
+                apply_inventory(dig, [])  # never write an empty inventory
+
     def test_pull_resumes_only_pending(self):
         with tempfile.TemporaryDirectory() as tmp:
             dig = Dig.create(Path(tmp), "x.com")
