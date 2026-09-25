@@ -51,7 +51,10 @@ class Dig:
 
     # -- meta / manifest -----------------------------------------------------
     def meta(self) -> dict:
-        return json.loads((self.root / "meta.json").read_text())
+        data = json.loads((self.root / "meta.json").read_text())
+        if "domain" not in data:
+            raise SystemExit(f"dig state corrupt: meta.json has no domain — {self.root}")
+        return data
 
     def save_meta(self, meta: dict) -> None:
         (self.root / "meta.json").write_text(json.dumps(meta, indent=2))
@@ -99,6 +102,14 @@ def safe_relpath(url: str) -> str:
     path = "".join(ch for ch in path if ord(ch) >= 32 and ch != "\x7f")
     parts = [seg for seg in path.split("/") if seg not in ("", ".", "..")]
     parts = [_shorten_segment(seg) for seg in parts]
+    query = urlsplit(url).query
+    if query and parts:
+        # distinct query strings are distinct resources — fold a query hash
+        # into the filename instead of silently collapsing them
+        digest = hashlib.sha1(query.encode()).hexdigest()[:8]
+        last = parts[-1]
+        stem, dot, ext = last.rpartition(".")
+        parts[-1] = f"{stem}-{digest}.{ext}" if dot and len(ext) <= 10 else f"{last}-{digest}"
     path = "/".join(parts)
     if not path:
         return "index.html"

@@ -4,6 +4,10 @@ Every rewrite is logged to REWRITES.md (disclosed-deviations model, never
 silent). Genuinely missing files stay missing — they surface in the report.
 site/ mirrors raw/ exactly (paths derive from raw_path, not from re-deriving
 the URL), and the tree is wiped before each full clean so no orphans linger.
+
+One mapping function (rewrite_target / local_target → safe_relpath) serves
+both the rewriter and the link-graph, so a link's written form and its
+analysis target can never disagree.
 """
 
 from __future__ import annotations
@@ -11,7 +15,7 @@ from __future__ import annotations
 import posixpath
 import re
 import shutil
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from .dig import Dig, safe_relpath
 
@@ -28,6 +32,7 @@ ATTR_URL = re.compile(r"""(?P<attr>href|src|action)\s*=\s*(?P<q>["'])(?P<url>[^"
 CSS_URL = re.compile(r"""url\((?P<q>["']?)(?P<url>[^"')]+)(?P=q)\)""")
 
 TEXT_SUFFIXES = (".html", ".htm", ".css")
+_SKIP_PREFIXES = ("#", "mailto:", "tel:", "javascript:", "data:")
 
 
 def same_site_host(host: str, domain: str) -> bool:
@@ -35,47 +40,66 @@ def same_site_host(host: str, domain: str) -> bool:
     return host.lower().removeprefix("www.") == domain.lower().removeprefix("www.")
 
 
-def _normalize(domain: str, url: str) -> tuple[str, str]:
-    """Classify a URL: ("rewrite", local_path) or ("skip", unchanged).
+def _strip_wayback(url: str) -> str:
+    stripped = WAYBACK_PREFIX.sub("", url)
+    return WAYBACK_PREFIX_REL.sub("", stripped)
 
-    Wayback prefixes are stripped from anything; only same-domain (incl. www
-    variant) absolute URLs are localized. Everything else is left untouched.
+
+def _classify(domain: str, url: str) -> tuple[str, str] | None:
+    """(kind, path) for a URL, or None if not a local reference.
+
+    kind is "absolute" (http(s) same-site, incl. www variant) or "root"
+    (starts with /). Page-relative URLs return None from here — the rewriter
+    leaves them untouched; the link-graph resolves them against base_dir.
     """
     url = url.strip()
-    if not url or url.startswith(("#", "mailto:", "tel:", "javascript:", "data:")):
-        return "skip", url
-    stripped = WAYBACK_PREFIX.sub("", url)
-    stripped = WAYBACK_PREFIX_REL.sub("", stripped)
+    if not url or url.startswith(_SKIP_PREFIXES):
+        return None
+    stripped = _strip_wayback(url)
     if stripped != url:
         url = stripped
-    match = re.match(r"https?://([^/]+)(/.*)?$", url)
+    match = re.match(r"https?://([^/?#]+)([/?#].*)?$", url)
     if match:
         if not same_site_host(match.group(1), domain):
-            return "skip", url  # external link
-        url = match.group(2) or "/"
-    if not url.startswith("/"):
-        return "skip", url  # already relative
-    return "rewrite", url
-
-
-def _dir_to_index(url: str, pulled: set[str]) -> str:
-    """Map directory-style URLs to index.html when the pulled tree has it."""
-    if url.endswith("/") or "." not in PurePosixPath(url).name:
-        candidate = (url if url.endswith("/") else url + "/") + "index.html"
-        if candidate.lstrip("/") in pulled:
-            return candidate
-    return url
-
-
-def _localize(domain: str, url: str, pulled: set[str]) -> str | None:
-    """Full pipeline for one URL: None = leave alone, else the local target."""
-    kind, value = _normalize(domain, url)
-    if kind == "skip":
+            return None  # external link
+        rest = match.group(2) or "/"
+    elif url.startswith("//"):
+        return None  # protocol-relative external
+    elif not url.startswith("/"):
+        return ("relative", url)
+    else:
+        rest = url
+    if rest.startswith(("#", "?")):
         return None
-    return _dir_to_index(value, pulled).lstrip("/")
+    return ("local", rest)
 
 
-def clean_text(text: str, domain: str, rel_path: str, pulled: set[str], is_css: bool) -> tuple[str, list[str]]:
+def rewrite_target(domain: str, url: str) -> str | None:
+    """Local path for absolute/wayback/root-absolute links; None = leave alone.
+
+    Page-relative links return None here — they keep working unchanged in the
+    mirrored tree.
+    """
+    classified = _classify(domain, url)
+    if classified is None or classified[0] == "relative":
+        return None
+    return safe_relpath(f"http://{domain}{classified[1]}")
+
+
+def local_target(domain: str, url: str, base_dir: str = "") -> str | None:
+    """Local path for ANY link (the link-graph mapping), resolving
+    page-relative URLs against base_dir the way a browser would."""
+    classified = _classify(domain, url)
+    if classified is None:
+        return None
+    kind, value = classified
+    if kind == "relative":
+        joined = posixpath.join(base_dir, value) if base_dir else value
+        value = "/" + posixpath.normpath(joined)
+    return safe_relpath(f"http://{domain}{value}")
+
+
+def clean_text(text: str, domain: str, rel_path: str, is_css: bool) -> tuple[str, list[str]]:
     """Rewrite one HTML/CSS document; returns (new_text, log_lines)."""
     log: list[str] = []
 
@@ -85,7 +109,7 @@ def clean_text(text: str, domain: str, rel_path: str, pulled: set[str], is_css: 
 
     def sub_attr(match: re.Match) -> str:
         url = match.group("url")
-        local = _localize(domain, url, pulled)
+        local = rewrite_target(domain, url)
         if local is None:
             return match.group(0)
         record(url, local, "")
@@ -93,7 +117,7 @@ def clean_text(text: str, domain: str, rel_path: str, pulled: set[str], is_css: 
 
     def sub_css(match: re.Match) -> str:
         url = match.group("url")
-        local = _localize(domain, url, pulled)
+        local = rewrite_target(domain, url)
         if local is None:
             return match.group(0)
         record(url, local, ", css")
@@ -121,43 +145,16 @@ def _decode(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-def _target_of(domain: str, url: str, pulled: set[str], base_dir: str) -> str | None:
-    """Resolve one link to its local target, or None if not a local reference.
-
-    Handles wayback-prefixed, absolute same-site (incl. www), root-relative,
-    and page-relative URLs — resolving against the page's directory like a
-    browser would. Query strings and anchors are stripped.
-    """
-    url = url.strip()
-    if not url or url.startswith(("#", "mailto:", "tel:", "javascript:", "data:")):
-        return None
-    url = url.split("#", 1)[0].split("?", 1)[0] or None
-    if url is None:
-        return None
-    kind, value = _normalize(domain, url)
-    if kind == "rewrite":
-        return _dir_to_index(value, pulled).lstrip("/")
-    match = re.match(r"https?://([^/]+)(/.*)?$", url)
-    if match:  # external (same-site was consumed by _normalize above)
-        return None
-    if url.startswith("//"):
-        return None  # protocol-relative external
-    if url.startswith("/"):
-        return _dir_to_index(url, pulled).lstrip("/")
-    resolved = posixpath.normpath(posixpath.join(base_dir, url)) if base_dir else posixpath.normpath(url)
-    return _dir_to_index("/" + resolved, pulled).lstrip("/")
-
-
-def internal_targets(text: str, domain: str, pulled: set[str], page_rel: str = "") -> set[str]:
+def internal_targets(text: str, domain: str, page_rel: str = "") -> set[str]:
     """Local link targets in a document, resolved the way a browser would."""
     base_dir = posixpath.dirname(page_rel)
     targets: set[str] = set()
     for match in ATTR_URL.finditer(text):
-        target = _target_of(domain, match.group("url"), pulled, base_dir)
+        target = local_target(domain, match.group("url"), base_dir)
         if target is not None:
             targets.add(target)
     for match in CSS_URL.finditer(text):
-        target = _target_of(domain, match.group("url"), pulled, base_dir)
+        target = local_target(domain, match.group("url"), base_dir)
         if target is not None:
             targets.add(target)
     return targets
@@ -223,10 +220,10 @@ def run_clean(dig: Dig) -> dict:
         target.parent.mkdir(parents=True, exist_ok=True)
         if rel.lower().endswith(TEXT_SUFFIXES):
             text = _decode(raw_file.read_bytes())
-            text, log = clean_text(text, domain, rel, pulled, is_css=rel.lower().endswith(".css"))
+            text, log = clean_text(text, domain, rel, is_css=rel.lower().endswith(".css"))
             target.write_text(text, encoding="utf-8")
             all_log.extend(log)
-            internal |= internal_targets(text, domain, pulled, page_rel=rel)
+            internal |= internal_targets(text, domain, page_rel=rel)
         else:
             shutil.copyfile(raw_file, target)
 

@@ -125,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except (FileNotFoundError, json.JSONDecodeError, KeyError) as exc:
+    except (FileNotFoundError, json.JSONDecodeError) as exc:
         print(
             f"dig state missing or corrupt ({exc!r}) — run `excavate inventory <domain>` first",
             file=sys.stderr,

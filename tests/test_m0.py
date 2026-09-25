@@ -237,8 +237,7 @@ class TestClean(unittest.TestCase):
             '<a href="https://example.com/elsewhere">ext</a>'
             '<img src="https://magpu.com/img/logo.png"></body></html>'
         )
-        pulled = {"music/index.html", "img/logo.png", "style.css"}
-        text, log = clean_text(html, "magpu.com", "index.html", pulled, is_css=False)
+        text, log = clean_text(html, "magpu.com", "index.html", is_css=False)
         self.assertIn('href="music/index.html"', text)
         self.assertIn('src="img/logo.png"', text)
         self.assertIn('href="style.css"', text)
@@ -249,21 +248,39 @@ class TestClean(unittest.TestCase):
         self.assertEqual(len(chrome_log), 1)  # chrome stripping is a logged rewrite too
         self.assertGreaterEqual(len(log), 4)
 
-    def test_missing_directory_url_left_as_is(self):
+    def test_missing_directory_url_normalizes_to_index(self):
         html = '<a href="/gone/dir/">gone</a>'
-        text, log = clean_text(html, "x.com", "index.html", set(), is_css=False)
-        self.assertIn('href="gone/dir/"', text)  # not mapped to index.html — that file was never pulled
-        self.assertEqual(len(log), 1)  # absolute→relative localization is still a logged rewrite
+        text, log = clean_text(html, "x.com", "index.html", is_css=False)
+        # canonicalized to the index path (the file itself may not exist — the
+        # report says so honestly rather than the link pointing at a dir)
+        self.assertIn('href="gone/dir/index.html"', text)
+        self.assertEqual(len(log), 1)  # and the rewrite is logged
+
+    def test_page_relative_links_untouched(self):
+        html = '<a href="song.mp3">s</a><a href="../up.html">u</a>'
+        text, log = clean_text(html, "x.com", "music/list.html", is_css=False)
+        self.assertIn('href="song.mp3"', text)  # relative keeps working in the mirrored tree
+        self.assertIn('href="../up.html"', text)
+        self.assertEqual(log, [])
+
+    def test_query_string_links_map_to_hashed_paths(self):
+        # two distinct query strings are two distinct files — no silent collapse
+        a1 = safe_relpath("http://x.com/a.html?x=1")
+        a2 = safe_relpath("http://x.com/a.html?x=2")
+        self.assertNotEqual(a1, a2)
+        html = '<a href="/a.html?x=2">q</a>'
+        text, log = clean_text(html, "x.com", "index.html", is_css=False)
+        self.assertIn(f'href="{a2}"', text)  # written link matches the stored filename
 
     def test_www_variant_is_internal(self):
         html = '<a href="http://www.magpu.com/page.html">www</a>'
-        text, log = clean_text(html, "magpu.com", "index.html", {"page.html"}, is_css=False)
+        text, log = clean_text(html, "magpu.com", "index.html", is_css=False)
         self.assertIn('href="page.html"', text)
         self.assertEqual(len(log), 1)
 
     def test_near_miss_domain_stays_external(self):
         html = '<a href="http://notmagpu.com/page.html">evil</a>'
-        text, log = clean_text(html, "magpu.com", "index.html", {"page.html"}, is_css=False)
+        text, log = clean_text(html, "magpu.com", "index.html", is_css=False)
         self.assertIn('href="http://notmagpu.com/page.html"', text)
         self.assertEqual(log, [])
 
