@@ -215,12 +215,14 @@ def run_clean(dig: Dig) -> dict:
     all_log.extend(errors)
 
     if not valid:
-        # nothing cleanable — do NOT wipe a previously cleaned site/
-        (dig.root / "REWRITES.md").write_text(
-            f"# REWRITES — {dig.domain}\n\nEvery URL rewrite applied during clean. Nothing silent.\n\n"
-            + "\n".join(all_log) + "\nno cleanable captures — site/ left untouched\n",
-            encoding="utf-8",
-        )
+        # nothing cleanable — do NOT wipe a previously cleaned site/, and do
+        # not erase its rewrite history either: append, never overwrite
+        ledger = dig.root / "REWRITES.md"
+        prior = ledger.read_text() if ledger.exists() else (
+            f"# REWRITES — {dig.domain}\n\nEvery URL rewrite applied during clean. Nothing silent.\n\n")
+        ledger.write_text(prior.rstrip() + "\n\n" + "\n".join(all_log)
+                          + "\nno cleanable captures — site/ and prior ledger left untouched\n",
+                          encoding="utf-8")
         return {"cleaned": 0, "rewrites": 0, "never_crawled": []}
 
     # full re-clean: wipe stale output so no orphan survives from earlier runs
