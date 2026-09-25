@@ -204,8 +204,9 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(body)
             except OSError as exc:
-                # filesystem limits etc. — fail the row, never wedge the run
-                result.update(fetch_state="failed_4xx", error=f"local write failed: {exc}",
+                # filesystem limits etc. — fail the row (transient: resume retries),
+                # never wedge the run
+                result.update(fetch_state="failed_5xx", error=f"local write failed: {exc}",
                               raw_path=None, path_collision=None)
                 claimed.pop(rel, None)
                 failed += 1

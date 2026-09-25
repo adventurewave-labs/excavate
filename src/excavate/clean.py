@@ -231,4 +231,4 @@ def run_clean(dig: Dig) -> dict:
         encoding="utf-8",
     )
     never_crawled = sorted(t for t in internal if t not in pulled and t != "")
-    return {"cleaned": len(captures), "rewrites": len(all_log), "never_crawled": never_crawled}
+    return {"cleaned": len(valid), "rewrites": len(all_log), "never_crawled": never_crawled}

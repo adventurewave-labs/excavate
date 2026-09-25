@@ -46,8 +46,11 @@ def cmd_inventory(args: argparse.Namespace) -> int:
     if not DOMAIN_RE.match(args.domain):
         raise SystemExit(f"not a plain domain: {args.domain!r} (no paths, no wildcards)")
     dig = Dig.create(Path(args.output or DEFAULT_DIG_BASE), args.domain)
-    with _client() as client:
-        summary = run_inventory(args.domain, dig, client)
+    try:
+        with _client() as client:
+            summary = run_inventory(args.domain, dig, client)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"CDX returned non-JSON (service degraded?): {exc}")
     print(
         f"inventoried {summary['domain']}: {summary['raw_rows']} raw CDX rows → "
         f"{summary['unique_urls']} unique URLs ({summary['pending']} pending, {summary['skipped']} skipped)"
@@ -122,9 +125,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except json.JSONDecodeError as exc:
-        print(f"CDX returned non-JSON (service degraded?): {exc}", file=sys.stderr)
-        return 1
     except (httpx.HTTPError, ValueError) as exc:
         print(f"network/data error: {exc}", file=sys.stderr)
         return 1

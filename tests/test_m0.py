@@ -353,7 +353,7 @@ class TestCleanAndReport(unittest.TestCase):
                  "raw_path": "../escaped.txt", "path_collision": None},
             ])
             summary = run_clean(dig)
-            self.assertEqual(summary["cleaned"], 1)
+            self.assertEqual(summary["cleaned"], 0)  # the escape row cleaned nothing
             self.assertIn("ERROR: raw file missing or outside dig", (dig.root / "REWRITES.md").read_text())
 
     def test_missing_raw_file_not_phantom_in_pulled(self):
