@@ -44,6 +44,8 @@ def run_report(dig: Dig) -> dict:
     digest_verified = sum(1 for c in fetched if c.get("digest_ok") is True)
     digest_bad = [c for c in fetched if c.get("digest_ok") is False]
     digest_unverifiable = [c for c in fetched if c.get("digest_ok") is None]
+    fallbacks = [c for c in fetched if c.get("fallback_from")]
+    selection_at = (dig.meta().get("selection") or {}).get("at")
     permanent = [c for c in captures if c["fetch_state"] == "failed_4xx"]
     transient = [c for c in captures if c["fetch_state"] == "failed_5xx"]
     skipped = [c for c in captures if c["fetch_state"] == "skipped"]
@@ -56,6 +58,8 @@ def run_report(dig: Dig) -> dict:
         "",
         "Completeness accounting for this dig. Missing files are listed as missing; nothing is faked.",
         "",
+        f"Capture selection: {'nearest to ' + selection_at if selection_at else 'latest'} 2xx capture per URL.",
+        "",
         "## Counts",
         "",
         "| metric | value |",
@@ -63,6 +67,7 @@ def run_report(dig: Dig) -> dict:
         f"| raw CDX rows (no collapse/filter) | {raw_rows} |",
         f"| unique URLs | {len(captures)} |",
         f"| fetched | {by_state.get('fetched', 0)} |",
+        f"| — via a fallback capture (wanted one was gone) | {len(fallbacks)} |",
         f"| — digest verified against CDX (SHA-1) | {digest_verified} |",
         f"| — digest MISMATCH | {len(digest_bad)} |",
         f"| — digest unverifiable (reason listed) | {len(digest_unverifiable)} |",
@@ -77,6 +82,9 @@ def run_report(dig: Dig) -> dict:
     if mismatches:
         lines += ["## Magic-byte mismatches (content-type lied)", ""]
         lines += [f"- `{site_rel(c)}` — body did not match extension (source {c['source']})" for c in mismatches] + [""]
+    if fallbacks:
+        lines += ["## Fallback captures (the wanted capture was gone; another capture of the same URL was used)", ""]
+        lines += [f"- `{c['url']}` — wanted {c['fallback_from']}, used {c['timestamp']}" for c in fallbacks] + [""]
     if digest_bad:
         lines += ["## Integrity — digest mismatches (bytes on disk differ from the archived payload)", ""]
         lines += [f"- `{site_rel(c)}` — {c.get('digest_note')}" for c in digest_bad] + [""]
@@ -106,6 +114,7 @@ def run_report(dig: Dig) -> dict:
         "skipped": by_state.get("skipped", 0),
         "never_crawled": len(never_crawled),
         "mismatches": len(mismatches),
+        "fallbacks": len(fallbacks),
         "digest_verified": digest_verified,
         "digest_mismatch": len(digest_bad),
         "digest_unverifiable": len(digest_unverifiable),

@@ -26,6 +26,7 @@ CDX_API = "https://web.archive.org/cdx/search/cdx"
 CDX_PAGE_SIZE = 5000    # rows per request; big sites take several pages
 CDX_MAX_PAGES = 2000    # 10M rows — a runaway-pagination guard, not a product limit
 MATCH_TYPES = ("prefix", "host", "domain")
+MAX_ALTERNATES = 5      # fallback captures remembered per URL (each costs up to 2 requests to try)
 _TIMESTAMP = re.compile(r"\d{4,14}")
 
 REVISIT_MIMETYPE = "warc/revisit"
@@ -142,25 +143,76 @@ def fetch_cdx_rows(domain: str, client: httpx.Client, limiter: RateLimiter | Non
     return fetch_cdx_pages(CdxQuery(domain), client, limiter, sleep_fn)[0]
 
 
-def _rank(row: dict) -> tuple:
-    """Higher wins: has-content 2xx beats revisit beats error; newer beats older."""
-    status = str(row.get("statuscode", ""))
-    has_content = row.get("mimetype") != REVISIT_MIMETYPE and status.startswith("2")
-    return (has_content, status.startswith("2"), row.get("timestamp", ""))
+def parse_timestamp(value: str) -> datetime:
+    """A (possibly partial) Wayback timestamp as a datetime; `2003` means the
+    start of 2003. Raises ValueError for anything that is not a real date."""
+    if not _TIMESTAMP.fullmatch(value):
+        raise ValueError(f"not a timestamp: {value!r} (4–14 digits, e.g. 2003 or 20030601)")
+    return datetime.strptime(value + "00000101000000"[len(value):], "%Y%m%d%H%M%S")
 
 
-def resolve_best(rows: list[dict]) -> list[dict]:
-    """Best surviving capture per original URL: 2xx with content, newest wins."""
-    best: dict[str, dict] = {}
+def _fetchable(row: dict) -> bool:
+    return row.get("mimetype") != REVISIT_MIMETYPE and str(row.get("statuscode", "")).startswith("2")
+
+
+def _distance(row: dict, target: datetime) -> float:
+    try:
+        return abs((parse_timestamp(str(row.get("timestamp", ""))) - target).total_seconds())
+    except ValueError:
+        return float("inf")
+
+
+def _preference(rows: list[dict], at: str | None) -> list[dict]:
+    """One URL's captures, most wanted first. Fetchable (2xx with a body)
+    always beats revisit beats error. Within a class: newest first, or — with
+    `at` — nearest to that moment (ties go to the earlier capture, the one
+    that already existed at `at`)."""
+    target = parse_timestamp(at) if at else None
+
+    def key(row: dict) -> tuple:
+        status = str(row.get("statuscode", ""))
+        klass = (not _fetchable(row), not status.startswith("2"))
+        stamp = str(row.get("timestamp", ""))
+        if target is None:
+            return (*klass, 0.0, _invert(stamp))
+        return (*klass, _distance(row, target), stamp)
+
+    return sorted(rows, key=key)
+
+
+def _invert(stamp: str) -> str:
+    """Sort key that orders digit strings descending under an ascending sort."""
+    return "".join(chr(ord("9") - ord(ch) + ord("0")) if ch.isdigit() else ch for ch in stamp.ljust(14, "0"))
+
+
+def resolve_best(rows: list[dict], at: str | None = None) -> list[dict]:
+    """The wanted capture per original URL, plus its fallback chain.
+
+    Default: the newest 2xx capture with a body. With `at`: the one nearest
+    that date — a site as it stood in one era, not the last state of every
+    file. `alternates` are the next-most-wanted fetchable captures of the
+    same URL; pull works down them when the wanted one turns out to be gone.
+    """
+    by_url: dict[str, list[dict]] = {}
     for row in rows:
         url = row.get("original")
-        if not url:
-            continue
-        if url not in best or _rank(row) > _rank(best[url]):
-            best[url] = row
+        if url:
+            by_url.setdefault(url, []).append(row)
     caps = []
-    for url, row in best.items():
-        fetchable = row.get("mimetype") != REVISIT_MIMETYPE and str(row.get("statuscode", "")).startswith("2")
+    for url, url_rows in by_url.items():
+        ordered = _preference(url_rows, at)
+        row = ordered[0]
+        fetchable = _fetchable(row)
+        seen = {row.get("timestamp")}
+        alternates: list[dict] = []
+        for other in ordered[1:]:
+            if len(alternates) >= MAX_ALTERNATES or not _fetchable(other):
+                break
+            if other.get("timestamp") in seen:
+                continue  # CDX lists a capture once per WARC record; one try is enough
+            seen.add(other.get("timestamp"))
+            alternates.append({"timestamp": other.get("timestamp", ""), "digest": other.get("digest", ""),
+                               "mimetype": other.get("mimetype", "")})
         caps.append(
             {
                 "url": url,
@@ -179,6 +231,8 @@ def resolve_best(rows: list[dict]) -> list[dict]:
                 "error": None,
                 "raw_path": None,
                 "path_collision": None,
+                "alternates": alternates if fetchable else [],
+                "fallback_from": None,  # the wanted timestamp, when an alternate was used instead
             }
         )
     caps.sort(key=lambda c: c["url"])
@@ -191,25 +245,34 @@ def _skip_reason(row: dict) -> str:
     return f"best capture status {row.get('statuscode', '?')}"
 
 
-def apply_inventory(dig: Dig, rows: list[dict], query: CdxQuery | None = None, pages: int = 1) -> dict:
+def apply_inventory(dig: Dig, rows: list[dict], query: CdxQuery | None = None, pages: int = 1,
+                    at: str | None = None) -> dict:
     """Persist raw rows + resolved captures, MERGING into existing state.
 
     A URL whose best capture is unchanged (same timestamp) keeps its fetch
     results; a re-resolved URL (different timestamp) resets to pending — the
     previously downloaded bytes belong to a different capture.
     """
-    caps = resolve_best(rows)
+    caps = resolve_best(rows, at)
     if not caps:
         raise SystemExit("CDX returned zero usable rows — refusing to write an empty inventory")
     if (dig.root / "captures.json").exists():
         existing = {c["url"]: c for c in dig.load_captures()}
         for cap in caps:
             prev = existing.get(cap["url"])
-            if prev and prev.get("timestamp") == cap["timestamp"]:
+            # "unchanged" means the WANTED capture is the same — a row that fell
+            # back to an alternate keeps that result instead of re-trying the dead one
+            if prev and (prev.get("fallback_from") or prev.get("timestamp")) == cap["timestamp"]:
                 for field in _STATE_FIELDS:
                     cap[field] = prev.get(field)
+                if prev.get("fallback_from"):
+                    for field in ("timestamp", "digest", "mimetype", "fallback_from", "alternates"):
+                        cap[field] = prev.get(field)
+                elif prev.get("fetch_state") == "failed_4xx" and "alternates" in prev:
+                    cap["alternates"] = prev["alternates"]  # already-exhausted chain stays exhausted
     dig.write_raw_manifest(rows)
     dig.save_captures(caps)
+    dig.save_meta({**dig.meta(), "selection": {"at": at}})
     if query is not None:
         dig.save_meta({**dig.meta(), "query": query.describe(), "cdx_pages": pages, "raw_rows": len(rows),
                        "inventoried_at": datetime.now(UTC).isoformat(timespec="seconds")})
@@ -226,7 +289,9 @@ def apply_inventory(dig: Dig, rows: list[dict], query: CdxQuery | None = None, p
 
 
 def run_inventory(domain: str, dig: Dig, client: httpx.Client, query: CdxQuery | None = None,
-                  limiter: RateLimiter | None = None, sleep_fn=time.sleep) -> dict:
+                  limiter: RateLimiter | None = None, sleep_fn=time.sleep, at: str | None = None) -> dict:
     query = query or CdxQuery(domain)
+    if at is not None:
+        parse_timestamp(at)  # fail before spending a request
     rows, pages = fetch_cdx_pages(query, client, limiter, sleep_fn)
-    return apply_inventory(dig, rows, query, pages)
+    return apply_inventory(dig, rows, query, pages, at)

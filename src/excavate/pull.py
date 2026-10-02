@@ -5,6 +5,8 @@ Rules from the spec:
 - <= 30 requests/minute sustained (observed ceiling ~60; we run at half)
 - exponential backoff on 429/5xx — 3 chances per row (total, across both
   replay modes), then the row fails
+- when the wanted capture is permanently gone, fall back through the URL's
+  other captures (nearest-first) before calling the file lost — disclosed
 - magic-byte validation on every body — content-types lie
 - CDX digest verification on every `id_` body — proof the bytes on disk are
   the bytes IA archived (unverifiable cases are recorded as such, with reason)
@@ -194,6 +196,39 @@ def fetch_one(capture: dict, client: httpx.Client, limiter: RateLimiter, sleep_f
     return capture
 
 
+def _fall_back(capture: dict, client: httpx.Client, limiter: RateLimiter, sleep_fn) -> dict:
+    """The wanted capture is permanently gone (4xx in both replay modes): work
+    down the URL's alternate captures before declaring the file lost.
+
+    Only a PERMANENT failure triggers this — a transient one keeps the wanted
+    capture and is retried on resume. On success the row records which capture
+    was actually used (`timestamp`) and which was wanted (`fallback_from`);
+    on exhaustion it reverts to the wanted capture and lists every attempt.
+    """
+    alternates = capture.get("alternates") or []
+    if capture["fetch_state"] != "failed_4xx" or not alternates:
+        return capture
+    wanted = {field: capture.get(field) for field in ("timestamp", "digest", "mimetype")}
+    attempts = [f"{capture['timestamp']} ({capture.get('error')})"]
+    while capture["fetch_state"] == "failed_4xx" and alternates:
+        alternate = alternates.pop(0)
+        capture.update(timestamp=alternate["timestamp"], digest=alternate.get("digest", ""),
+                       mimetype=alternate.get("mimetype") or capture.get("mimetype"))
+        fetch_one(capture, client, limiter, sleep_fn=sleep_fn)
+        if capture["fetch_state"] == "fetched":
+            capture["fallback_from"] = wanted["timestamp"]
+            capture["alternates"] = alternates
+            return capture
+        attempts.append(f"{capture['timestamp']} ({capture.get('error')})")
+        if capture["fetch_state"] == "failed_5xx":
+            # throttled or flaky mid-chain: put this alternate back and let resume continue
+            alternates.insert(0, alternate)
+            break
+    capture.update(**wanted, alternates=alternates, fallback_from=None)
+    capture["error"] = f"{len(attempts)} captures tried: " + "; ".join(attempts)
+    return capture
+
+
 def _claim_path(claimed: dict[str, str], claimed_ci: dict[str, str], rel: str, url: str) -> tuple[str, bool]:
     """Reserve `rel` for `url`. Returns (path, collision).
 
@@ -257,6 +292,7 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
                        magic_ok=None, error=None, path_collision=None,
                        digest_ok=None, digest_note=None)
         result = fetch_one(capture, client, limiter, sleep_fn=sleep_fn)
+        result = _fall_back(result, client, limiter, sleep_fn)
         body = result.pop("_body", None)
         if result["fetch_state"] == "fetched" and body is not None:
             if prev_rel and claimed.get(prev_rel) == result["url"]:

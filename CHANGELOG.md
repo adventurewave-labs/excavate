@@ -2,6 +2,12 @@
 
 ## Unreleased — SOTA loop (`claude/sota-loop`)
 
+### L6 — capture selection + fallback chain
+- **Added:** `inventory --at <date>` selects each URL's capture nearest a date instead of its latest.
+- **Added:** `pull` falls back through a URL's other captures when the wanted one is permanently
+  gone; `fallback_from` records the substitution and the report has a "Fallback captures" section.
+- **Changed:** the report states the capture-selection rule the dig was built with.
+
 ### L5 — CDX inventory robustness
 - **Fixed:** the CDX inventory is paginated; previously one unpaginated request could truncate a
   large site without notice.

@@ -99,12 +99,20 @@ Every loop, in order:
     other hosts as external and same-path files from two hosts collide (disclosed, suffixed) —
     per-host layout is a follow-up for L10.
 
+- [x] **L6 — capture selection + fallback chain** (129 → 146 tests)
+  - `inventory --at YYYY[MMDD…]` picks each URL's capture nearest that date (a site as it stood in
+    one era); default is still the latest. A fetchable capture always beats a nearer error/revisit.
+  - Each URL remembers up to 5 alternate captures. When the wanted one is permanently gone (4xx in
+    both replay modes), `pull` works down the alternates before declaring the file lost. The row
+    records what was wanted and what was used; the report lists every fallback.
+  - A transient failure never triggers fallback (it is retried on resume, mid-chain included); an
+    exhausted chain is permanent and is not re-walked by resume or re-inventory.
+  - Unverified: how often a second capture is retrievable when the first 404s on the real Wayback
+    Machine — the mechanism is tested, the recovery rate is unknown until a live run. Each fallback
+    attempt costs up to 2 requests of the 30/min budget.
+
 ## Backlog (in order)
 
-- [ ] **L6 — capture selection + fallback chain.** `--at YYYYMMDD` picks the capture nearest a date
-  (a coherent era instead of "latest of everything"). When the chosen capture fails permanently,
-  fall back to the next-best capture of the same URL from `manifest.csv` before declaring it lost;
-  the report discloses which capture was actually used.
 - [ ] **L7 — SQLite state store.** `dig.sqlite` (WAL) replaces rewriting the whole `captures.json`
   after every row (O(n²) at 100k URLs; PRD FR-E2 already decides on SQLite). Transparent migration
   from existing digs; `captures.json` still exported for humans and old tooling.
