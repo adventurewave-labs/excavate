@@ -27,6 +27,7 @@ domain ──inventory──▶ manifest (CDX, paginated, no filters; --match/--
        ──clean───────▶ site/  (de-Wayback, rewrites logged, never fake missing files)
        ──check───────▶ crawl.json (links walked: recovered / missing / orphans)
        ──discover────▶ exact-URL CDX lookups for linked-but-missing files (then pull again)
+       ──scan────────▶ publish gate: credentials / bulk personal data in site/ (exit 1 if any unreviewed)
        ──report──────▶ VERIFICATION-REPORT.md (completeness accounting)
 ```
 

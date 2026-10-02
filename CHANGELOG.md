@@ -2,6 +2,11 @@
 
 ## Unreleased — SOTA loop (`claude/sota-loop`)
 
+### L12 — output-scan gate
+- **Added:** `excavate scan` — deterministic credential / bulk-PII scan of the output directory,
+  exit 1 on any unreviewed finding; fingerprint allow-list with mandatory reasons; redacted
+  `scan.json`; publish-gate status in the verification report.
+
 ### L11 — provenance
 - **Added:** `events.jsonl` (append-only PREMIS-lite event log, one line per stage run) and
   `site/PROVENANCE.json` (per-file source citations with Wayback links and hashes).

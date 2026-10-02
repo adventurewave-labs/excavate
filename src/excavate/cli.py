@@ -21,6 +21,7 @@ from .dig import Dig
 from .discover import DEFAULT_LIMIT, run_discover
 from .pull import REQUESTS_PER_MINUTE, RateLimiter, run_pull
 from .report import run_report
+from .scan import allow, run_scan
 
 USER_AGENT = f"excavate/{__version__} (digital-archaeology; respectful rate budget)"
 DEFAULT_DIG_BASE = "digs"
@@ -133,6 +134,27 @@ def cmd_discover(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_scan(args: argparse.Namespace) -> int:
+    dig = _open_dig(args.dig)
+    if args.allow:
+        if not args.reason:
+            raise SystemExit("--allow needs --reason \"why this is safe to publish\"")
+        entry = allow(dig, args.allow, args.reason)
+        print(f"allow-listed {entry['fingerprint']} ({entry['rule']} in {entry['path']}): {entry['reason']}")
+    result = run_scan(dig, Path(args.path) if args.path else None)
+    if not result["files"]:
+        raise SystemExit(f"nothing to scan: {result['scanned']} is empty — run `excavate clean` first")
+    for finding in result["findings"]:
+        if not finding["allowed"]:
+            where = f"{finding['path']}:{finding['line']}" if finding["line"] else finding["path"]
+            print(f"  [{finding['fingerprint']}] {where} — {finding['description']} ({finding['preview']})")
+    verdict = "CLEAN" if result["clean"] else f"BLOCKED — {result['blocking']} unreviewed finding(s)"
+    print(f"scan: {result['files']} files, {result['allowed']} allow-listed — {verdict}")
+    if not result["clean"]:
+        print("  review each one; remove the file, or: excavate scan --allow <fingerprint> --reason \"...\"")
+    return 0 if result["clean"] else 1  # a hard gate: never 0 with unreviewed findings
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     dig = _open_dig(args.dig)
     summary = run_report(dig)
@@ -183,6 +205,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help=f"max files to look up this run (default {DEFAULT_LIMIT})")
     p.add_argument("--recheck", action="store_true", help="forget earlier lookups and ask again")
     p.set_defaults(func=cmd_discover)
+
+    p = sub.add_parser("scan", help="output-scan gate: credentials / bulk personal data in what would be published (exit 1 if any)")
+    p.add_argument("--dig", default=None, help="dig directory (default: most recent under digs/)")
+    p.add_argument("--path", default=None, help="scan this directory instead of the dig's site/ (e.g. a build output)")
+    p.add_argument("--allow", default=None, metavar="FINGERPRINT", help="allow-list a reviewed finding (requires --reason)")
+    p.add_argument("--reason", default=None, help="why the allow-listed finding is safe to publish")
+    p.set_defaults(func=cmd_scan)
 
     p = sub.add_parser("report", help="emit VERIFICATION-REPORT.md (completeness accounting)")
     p.add_argument("--dig", default=None, help="dig directory (default: most recent under digs/)")

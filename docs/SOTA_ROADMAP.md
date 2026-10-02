@@ -181,11 +181,24 @@ Every loop, in order:
     the PREMIS schema or loaded into any preservation tool. Timestamps are the local clock, unsigned;
     the log is tamper-evident only in the sense that hashes would stop matching.
 
+- [x] **L12 — output-scan gate** (214 → 230 tests)
+  - New `excavate scan [--path DIR]`: scans every file that would be published (dotfiles, data
+    files and binaries included) for private keys, cloud/API tokens, password hashes and
+    passwd-format lines, clear-text credential assignments, payment card numbers (Luhn-checked),
+    SSNs, risky file names (`.env`, `*.sql`, `master.passwd*`, `.git/…`) and bulk emails/phones.
+  - A hard gate: exit 1 with any unreviewed finding. An archive or oversized file that could not be
+    inspected is itself a finding. A reviewed finding is allow-listed by fingerprint with a
+    mandatory reason (`scan --allow <fp> --reason "…"`, kept in `scan-allow.json`); the allowance
+    covers that exact value in that file only.
+  - Findings, `scan.json` and the report show a redacted preview, never the secret. The report
+    states the gate: not run / stale (site changed since the scan) / clean / BLOCKED.
+  - Unverified: pattern coverage is the well-known credential shapes, tested on synthetic strings;
+    it has not been run on the velvet-bbs output that motivated it, and false-positive rates on
+    real old sites are unknown. It does not look inside archives, does no NER for names or
+    addresses, and nothing yet *prevents* a deploy — there is no deploy step in M0 to block.
+
 ## Backlog (in order)
 
-- [ ] **L12 — output-scan gate.** `excavate scan`: deterministic secret/credential/PII scan over
-  everything in `site/` (keys, tokens, password files, private-key blocks, bulk emails/phones),
-  reviewed-allowlist file, non-zero exit on findings (PRD FR-E5b — the velvet-bbs lesson).
 - [ ] **L13 — BagIt export.** `excavate export --bagit`: RFC 8493 bag (`bagit.txt`,
   `manifest-sha256.txt`, `tagmanifest`, `bag-info.txt`) built deterministically, plus a verifier
   (`excavate export --verify`) (PRD FR-E14).

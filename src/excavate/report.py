@@ -12,6 +12,7 @@ from .clean import REWRITE_LINE, TWIN_LINE, site_rel
 from .crawl import accounting_line, display_target, run_check
 from .dig import Dig
 from .provenance import load_events, record_event, selection_hash
+from .scan import scan_status
 
 EVENTS_SHOWN = 15
 
@@ -153,6 +154,17 @@ def run_report(dig: Dig) -> dict:
         "rewrites": rewrites,
         "twin_swaps": len(twin_lines),
     }
+    status, scan = scan_status(dig)
+    scan_lines = {
+        "not run": "**Not run.** Run `excavate scan` before publishing — an unscanned site has not passed the gate.",
+        "stale": "**Stale.** The site changed after the last scan; that result vouches for nothing. Run `excavate scan` again.",
+        "clean": "Clean — no unreviewed findings" + (f" ({scan['allowed']} allow-listed, see `scan-allow.json`)." if scan and scan["allowed"] else "."),
+        "findings": f"**BLOCKED — {scan['blocking'] if scan else 0} unreviewed finding(s).** Details (redacted) in `scan.json`. Do not publish.",
+    }
+    lines += ["", "## Output scan (publish gate)", "", scan_lines[status]]
+    if status == "findings" and scan:
+        lines += [""] + [f"- {rule}: {count}" for rule, count in scan["by_rule"].items()]
+    summary["scan"] = status
     events = load_events(dig)
     lines += ["", "## Chain of custody", "",
               f"{len(events) + 1} recorded events in `events.jsonl` (append-only; one line per stage run). "
