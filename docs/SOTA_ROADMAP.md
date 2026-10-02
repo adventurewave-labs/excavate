@@ -226,11 +226,43 @@ Every loop, in order:
     budget alone — real runs are slower (fallbacks, `im_` retries, backoff), by how much is unknown.
     `pull` still exits 0 with failures left over; only `run --strict` turns that into a failing code.
 
+- [x] **L15 — wrap-up** (266 → 288 tests)
+  - `tests/test_golden.py`: one synthetic site through the real CLI against a mocked archive —
+    latin-1 page, unquoted attributes, CSS, digest verification, `im_` fallback with chrome,
+    alternate-capture fallback, both twin kinds, a never-archived link, a 404-only link, revisit and
+    ragged CDX rows — with the exact output bytes, ledger lines, crawl counts, report lines,
+    citations, event sequence and a verified bag pinned.
+  - `tests/test_properties.py`: seeded random inputs against invariants — paths are always safe and
+    inside the dig; cleaning is idempotent and preserves the link graph; inert documents come back
+    untouched; any bytes round-trip through the charset layer; a twin is always a real other file.
+  - **Two real bugs found by these tests and fixed:** (1) long non-ASCII file names were capped by
+    characters, not bytes, so a long Japanese or accented name exceeded the 255-byte filesystem
+    limit and the file could not be written; (2) the output scan reported 14-digit Wayback
+    timestamps as payment cards one time in ten (Luhn coincidence) — on a real dig that would have
+    blocked the gate on `PROVENANCE.json` itself. Card detection now also requires an issuer prefix.
+  - README, M0 spec status and CHANGELOG now describe what the code does.
+
+## Still unverified (the honest list)
+
+- **No live run.** Nothing has touched the real Wayback Machine. Inferred from docs, not observed:
+  the CDX resume-key reply shape; the header by which `id_` replay exposes a content-encoded
+  payload (if wrong, gzip-archived captures show as digest mismatches); what `im_` replay injects.
+- **The spec's two fixture acceptance tests are open**: magpu (≈921 URLs → 853-file site) and
+  strops (1,340 CDX rows) are not in this repo.
+- **`~/rig/scripts/review.sh` has not been run** on this branch (builder ≠ reviewer is not yet satisfied).
+- Real-world rates unknown: how often an alternate capture recovers a file; scan false positives on
+  real old sites; how much slower than the ETA a real pull runs.
+- Known gaps: files on other hosts/subdomains are listed but not pulled or localized; links built
+  by JavaScript are invisible; `.js` files are not cleaned (wombat wrapper stays); archives are not
+  opened by the scan; no WACZ export; the bag has only been checked by this repo's own verifier;
+  no way to record a hand reconstruction in the ledger; one process per dig at a time.
+- Decisions left to a human: whether `export` should refuse on an unclean scan (today it labels the
+  bag and `--require-clean` refuses); whether image format twins (`.gif` → `.png`) should be on by
+  default; whether to wire `scripts/check.sh` into CI.
+
 ## Backlog (in order)
 
-- [ ] **L15 — wrap-up.** One end-to-end golden fixture (synthetic site served by a mocked IA
-  transport, exercising every loop above), property tests for `safe_relpath` and the rewriter,
-  refresh README / M0 spec status / CHANGELOG, and a final summary of what is still unverified.
+All fifteen items landed. Nothing remains in the backlog.
 
 ## Deliberately out of scope here
 

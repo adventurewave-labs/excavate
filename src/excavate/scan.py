@@ -104,6 +104,22 @@ def _luhn(digits: str) -> bool:
     return total % 10 == 0
 
 
+def _card_shaped(digits: str) -> bool:
+    """Issuer prefix + length of a real card scheme. Luhn alone is a 1-in-10
+    coincidence: without this, every tenth 14-digit Wayback timestamp
+    (20040101000000…) would be reported as a payment card."""
+    n = len(digits)
+    two, four = int(digits[:2]), int(digits[:4])
+    return (
+        (digits[0] == "4" and n in (13, 16, 19))                       # Visa
+        or (n == 16 and (51 <= two <= 55 or 2221 <= four <= 2720))     # Mastercard
+        or (n == 15 and two in (34, 37))                               # American Express
+        or (n == 16 and (four == 6011 or two == 65))                   # Discover
+        or (n == 14 and (two in (36, 38) or 300 <= int(digits[:3]) <= 305))  # Diners Club
+        or (n == 16 and 3528 <= four <= 3589)                          # JCB
+    )
+
+
 def _scan_text(text: str, rel: str) -> list[Finding]:
     found: list[Finding] = []
 
@@ -117,8 +133,8 @@ def _scan_text(text: str, rel: str) -> list[Finding]:
             add(rule, description, match.start(), match.group(match.lastindex or 0))
     for match in _CARD.finditer(text):
         digits = re.sub(r"\D", "", match.group(0))
-        if 13 <= len(digits) <= 19 and len(set(digits)) > 1 and _luhn(digits):
-            add("payment-card", "payment card number (passes Luhn check)", match.start(), digits)
+        if 13 <= len(digits) <= 19 and len(set(digits)) > 1 and _card_shaped(digits) and _luhn(digits):
+            add("payment-card", "payment card number (issuer prefix + Luhn check)", match.start(), digits)
     for rule, description, pattern in (("bulk-emails", "email addresses", _EMAIL), ("bulk-phones", "phone numbers", _PHONE)):
         distinct = sorted({m.group(0).lower() for m in pattern.finditer(text)})
         if len(distinct) >= BULK_THRESHOLD:

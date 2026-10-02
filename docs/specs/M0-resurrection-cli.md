@@ -1,6 +1,6 @@
 # Spec M0 — Resurrection CLI (inventory · pull · clean → local static folder)
 
-**Status:** Draft for review · **Date:** 2026-09-11 · **Milestone:** M0 (PRD §9) · **Repo:** `adventurewave-labs/excavate`
+**Status:** Implemented on `claude/sota-loop` (draft PR #3), awaiting human review and a live run — see *Implementation status* at the end · **Date:** 2026-09-11 · **Milestone:** M0 (PRD §9) · **Repo:** `adventurewave-labs/excavate`
 **Ceremony:** delta spec per rig constitution Law 5; reviewed in the same PR as the skeleton it introduces.
 
 ## Goal
@@ -47,3 +47,33 @@ Every command is idempotent and resumable against the manifest; `report` emits `
 - Python 3.11+, stdlib + minimal deps (httpx or requests; no framework). Local execution only (control plane; nothing heavy enough for a remote plane).
 - Secrets never in git (Law 9) — no keys required for M0 (CDX + replay are keyless).
 - Read-only toward IA; the rate budget is a product feature, not just politeness.
+
+## Implementation status (2026-10-02, branch `claude/sota-loop`)
+
+What the code does today, against this spec. Detail per change: `docs/SOTA_ROADMAP.md`.
+
+| spec item | state |
+|---|---|
+| `inventory` — no collapse, no mimetype filter, best capture per URL, `manifest.csv` + `manifest.json` | done; also paginated, rate-limited, `--match`, `--from/--to`, `--at` |
+| `pull` — `id_` with `im_` fallback, ≤30 req/min, backoff on 429, magic-byte check, resumable | done; also CDX digest verification, fallback to other captures of the same URL, SQLite state |
+| `clean` — localize URLs, directory → `index.html`, strip Wayback chrome, twin swap, `REWRITES.md` | done; also charset-faithful output, tokenizer-based rewriting, `<base href>`, `srcset`, CSS `@import` |
+| crawl-check — every internal link resolves or is accounted for | done (`excavate check`, `crawl.json`) |
+| `report` — counts, rewrites, missing listed never faked, reconstruction ledger | done; the reconstruction ledger is a fixed "none" line — there is no way yet to *record* a hand reconstruction |
+| every command idempotent and resumable | done |
+
+Beyond the spec (pulled forward from the PRD because they are deterministic and cheap): `discover`, `scan`
+(FR-E5b output gate), `export` (FR-E14 BagIt), provenance (FR-E9), `run`, `status`, `--json`.
+
+### Acceptance tests
+
+1. **magpu fixture** — **open.** The corpus is not in this repo; nothing has been run against it.
+2. **strops fixture** — **open** for the same reason. The invariant itself (no collapse/filter parameter ever sent;
+   `manifest.csv` keeps every raw row) is asserted on synthetic rows.
+3. **Resume test** — passing (`tests/test_state_store.py`: kill mid-run, re-run, zero duplicate fetches).
+4. **429 test** — passing (`tests/test_m0.py`, `tests/test_cdx_inventory.py`: backoff engaged, no dropped rows).
+
+### Not verified
+
+No command has been run against the live Wayback Machine — the build environment cannot reach it. Behaviours
+inferred from documentation rather than observed: the CDX resume-key page shape, which header `id_` replay uses
+to expose a content-encoded payload, and what `im_` replay injects into HTML.

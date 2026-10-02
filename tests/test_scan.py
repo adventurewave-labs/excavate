@@ -16,7 +16,7 @@ from excavate.cli import main
 from excavate.dig import Dig
 from excavate.provenance import load_events
 from excavate.report import run_report
-from excavate.scan import BULK_THRESHOLD, allow, redact, run_scan, scan_status, scan_tree
+from excavate.scan import BULK_THRESHOLD, _luhn, allow, redact, run_scan, scan_status, scan_tree
 from test_m0 import fresh_capture
 
 FAKE = "FAKE"
@@ -73,6 +73,15 @@ class TestPatterns(unittest.TestCase):
         self.assertEqual(self._rules({"order.html": f"card: {CARD}"}), ["payment-card"])
         self.assertEqual(self._rules({"order.html": "ref: 4111 1111 1111 1112"}), [])   # fails Luhn
         self.assertEqual(self._rules({"zeros.html": "0000 0000 0000 0000"}), [])        # passes Luhn, obviously not a card
+
+    def test_wayback_timestamps_are_not_payment_cards(self):
+        # found by the golden run: 1 in 10 fourteen-digit timestamps passes Luhn
+        luhn_valid = [f"2004010100{n:04d}" for n in range(200) if _luhn(f"2004010100{n:04d}")]
+        self.assertGreater(len(luhn_valid), 10)
+        page = "".join(f'<a href="https://web.archive.org/web/{stamp}/http://x.com/">c</a> {stamp}\n' for stamp in luhn_valid)
+        self.assertEqual(self._rules({"PROVENANCE.json": page}), [])
+        for real_shape in ("4111111111111111", "5555555555554444", "378282246310005", "6011111111111117", "30569309025904"):
+            self.assertEqual(self._rules({"cards.txt": f"n {real_shape}"}), ["payment-card"], real_shape)
 
     def test_found_inside_binary_and_data_files(self):
         blob = b"\x00\x01\xff" + AWS.encode() + b"\xfe\x00"

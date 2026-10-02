@@ -254,12 +254,18 @@ def safe_relpath(url: str) -> str:
 
 
 def _shorten_segment(segment: str, limit: int = 180) -> str:
-    """Cap one path segment, preserving a short extension and disambiguating
-    the truncation with a content hash (two long names must not collide)."""
-    if len(segment) <= limit:
+    """Cap one path segment at `limit` BYTES of UTF-8, preserving a short
+    extension and disambiguating the truncation with a hash of the full name
+    (two long names must not collide). Filesystems limit a name to 255 bytes,
+    not 255 characters — a long Japanese or accented name hits that limit at a
+    third or half the character count."""
+    if len(segment.encode("utf-8")) <= limit:
         return segment
-    digest = hashlib.sha1(segment.encode()).hexdigest()[:8]
+    digest = hashlib.sha1(segment.encode("utf-8", "surrogatepass")).hexdigest()[:8]
     stem, dot, ext = segment.rpartition(".")
-    if dot and len(ext) <= 10:
-        return f"{stem[: limit - 11 - len(ext)]}-{digest}.{ext}"
-    return f"{segment[: limit - 9]}-{digest}"
+    if dot and stem and len(ext) <= 10 and ext.isascii():
+        tail = f"-{digest}.{ext}"
+    else:
+        stem, tail = segment, f"-{digest}"
+    budget = limit - len(tail.encode("utf-8"))
+    return stem.encode("utf-8", "surrogatepass")[:budget].decode("utf-8", "ignore") + tail

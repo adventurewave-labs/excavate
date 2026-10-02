@@ -2,6 +2,13 @@
 
 ## Unreleased — SOTA loop (`claude/sota-loop`)
 
+### L15 — wrap-up
+- **Fixed:** path segments are capped at 180 **bytes** (was characters) — long non-ASCII file
+  names no longer exceed the filesystem's 255-byte limit.
+- **Fixed:** the output scan no longer reports Wayback timestamps as payment cards (issuer prefix
+  now required in addition to the Luhn check).
+- **Added:** golden end-to-end test and seeded property tests; README, M0 spec status refreshed.
+
 ### L14 — operator UX
 - **Added:** `excavate run <domain>` (whole pipeline, `--strict`), `excavate status`, `--json` on
   every command, documented exit codes, `pull --dry-run`, per-URL progress with ETA (`--quiet`).
