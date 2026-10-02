@@ -17,7 +17,8 @@ CDX_API = "https://web.archive.org/cdx/search/cdx"
 REVISIT_MIMETYPE = "warc/revisit"
 
 _STATE_FIELDS = ("fetch_state", "sha1_fetched", "source", "http_status",
-                 "magic_ok", "error", "raw_path", "skip_reason", "path_collision")
+                 "magic_ok", "error", "raw_path", "skip_reason", "path_collision",
+                 "digest_ok", "digest_note")
 
 
 def fetch_cdx_rows(domain: str, client: httpx.Client) -> list[dict]:
@@ -68,6 +69,8 @@ def resolve_best(rows: list[dict]) -> list[dict]:
                 "source": None,  # id_ | im_
                 "http_status": None,
                 "magic_ok": None,
+                "digest_ok": None,  # True | False | None (unverifiable — see digest_note)
+                "digest_note": None,
                 "error": None,
                 "raw_path": None,
                 "path_collision": None,

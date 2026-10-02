@@ -39,6 +39,10 @@ def run_report(dig: Dig) -> dict:
     captures = dig.load_captures()
     by_state = Counter(c["fetch_state"] for c in captures)
     mismatches = [c for c in captures if c["fetch_state"] == "fetched" and c.get("magic_ok") is False]
+    fetched = [c for c in captures if c["fetch_state"] == "fetched"]
+    digest_verified = sum(1 for c in fetched if c.get("digest_ok") is True)
+    digest_bad = [c for c in fetched if c.get("digest_ok") is False]
+    digest_unverifiable = [c for c in fetched if c.get("digest_ok") is None]
     permanent = [c for c in captures if c["fetch_state"] == "failed_4xx"]
     transient = [c for c in captures if c["fetch_state"] == "failed_5xx"]
     skipped = [c for c in captures if c["fetch_state"] == "skipped"]
@@ -58,6 +62,9 @@ def run_report(dig: Dig) -> dict:
         f"| raw CDX rows (no collapse/filter) | {raw_rows} |",
         f"| unique URLs | {len(captures)} |",
         f"| fetched | {by_state.get('fetched', 0)} |",
+        f"| — digest verified against CDX (SHA-1) | {digest_verified} |",
+        f"| — digest MISMATCH | {len(digest_bad)} |",
+        f"| — digest unverifiable (reason listed) | {len(digest_unverifiable)} |",
         f"| pending (not yet pulled) | {by_state.get('pending', 0)} |",
         f"| failed 4xx (permanent) | {by_state.get('failed_4xx', 0)} |",
         f"| failed 5xx (transient — retry on resume) | {by_state.get('failed_5xx', 0)} |",
@@ -69,6 +76,14 @@ def run_report(dig: Dig) -> dict:
     if mismatches:
         lines += ["## Magic-byte mismatches (content-type lied)", ""]
         lines += [f"- `{site_rel(c)}` — body did not match extension (source {c['source']})" for c in mismatches] + [""]
+    if digest_bad:
+        lines += ["## Integrity — digest mismatches (bytes on disk differ from the archived payload)", ""]
+        lines += [f"- `{site_rel(c)}` — {c.get('digest_note')}" for c in digest_bad] + [""]
+    if digest_unverifiable:
+        reasons = Counter(c.get("digest_note") or "not checked (pulled before digest verification existed)"
+                          for c in digest_unverifiable)
+        lines += ["## Integrity — unverifiable (not a failure; the comparison was not meaningful)", ""]
+        lines += [f"- {count} × {reason}" for reason, count in sorted(reasons.items())] + [""]
     if permanent:
         lines += ["## Failed fetches — permanent (4xx)", ""] + [f"- `{c['url']}` — {c.get('error')}" for c in permanent] + [""]
     if transient:
@@ -90,5 +105,8 @@ def run_report(dig: Dig) -> dict:
         "skipped": by_state.get("skipped", 0),
         "never_crawled": len(never_crawled),
         "mismatches": len(mismatches),
+        "digest_verified": digest_verified,
+        "digest_mismatch": len(digest_bad),
+        "digest_unverifiable": len(digest_unverifiable),
         "rewrites": rewrites,
     }

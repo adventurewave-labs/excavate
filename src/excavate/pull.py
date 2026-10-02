@@ -6,6 +6,8 @@ Rules from the spec:
 - exponential backoff on 429/5xx — 3 chances per row (total, across both
   replay modes), then the row fails
 - magic-byte validation on every body — content-types lie
+- CDX digest verification on every `id_` body — proof the bytes on disk are
+  the bytes IA archived (unverifiable cases are recorded as such, with reason)
 - resumable: pending rows, then transient failures (failed_5xx); permanent
   failures and fetched rows are never re-requested; state persists after every row
 - dedupe is keyed by URL, not disk existence — resumed runs overwrite their
@@ -22,7 +24,7 @@ import time
 
 import httpx
 
-from .dig import Dig, safe_relpath, sha1_hex
+from .dig import Dig, safe_relpath, sha1_base32, sha1_hex
 
 REQUESTS_PER_MINUTE = 30
 BACKOFF_SCHEDULE = (30, 60, 120)  # seconds; 3 chances per row, then it fails
@@ -90,6 +92,34 @@ def _ext(path: str) -> str:
     return ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
 
 
+_BASE32_SHA1 = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
+
+
+def verify_digest(capture: dict, body: bytes, source: str, headers: httpx.Headers) -> tuple[bool | None, str | None]:
+    """Compare the fetched body with the CDX digest. Returns (digest_ok, note).
+
+    True/False is only claimed when the comparison is meaningful: `id_` replay
+    returns the archived payload unmodified, so its SHA-1 must equal the CDX
+    digest. Everything else is None with the reason — an unverifiable body is
+    disclosed as unverifiable, never passed off as verified or as corrupt:
+    - `im_` replay is rewritten by Wayback, so it can never match;
+    - a content-encoded payload was digested in its encoded form, but the
+      HTTP client hands us decoded bytes;
+    - a CDX row with a missing/odd digest gives nothing to compare with.
+    """
+    expected = str(capture.get("digest") or "").strip().upper()
+    if len(expected) != 32 or not set(expected) <= _BASE32_SHA1:
+        return None, "no usable CDX digest"
+    if source != "id_":
+        return None, f"{source} replay is rewritten by Wayback"
+    if sha1_base32(body) == expected:
+        return True, None
+    encoding = headers.get("content-encoding") or headers.get("x-archive-orig-content-encoding")
+    if encoding and encoding.lower() != "identity":
+        return None, f"payload was content-encoded ({encoding}); digest covers the encoded bytes"
+    return False, f"sha1 {sha1_base32(body)} != CDX {expected}"
+
+
 def _replay_urls(capture: dict) -> list[tuple[str, str]]:
     base = f"https://web.archive.org/web/{capture['timestamp']}"
     return [
@@ -141,8 +171,11 @@ def fetch_one(capture: dict, client: httpx.Client, limiter: RateLimiter, sleep_f
             if response.status_code >= 400:
                 last_error = f"{source}: {response.status_code}"
                 break  # permanent for this mode; try the other
+            digest_ok, digest_note = verify_digest(capture, response.content, source, response.headers)
             capture.update(
                 fetch_state="fetched",
+                digest_ok=digest_ok,
+                digest_note=digest_note,
                 source=source,
                 http_status=response.status_code,
                 sha1_fetched=sha1_hex(response.content),
@@ -219,8 +252,10 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
         prev_source = capture.get("source")
         prev_http = capture.get("http_status")
         prev_magic = capture.get("magic_ok")
+        prev_digest = (capture.get("digest_ok"), capture.get("digest_note"))
         capture.update(sha1_fetched=None, source=None, http_status=None,
-                       magic_ok=None, error=None, path_collision=None)
+                       magic_ok=None, error=None, path_collision=None,
+                       digest_ok=None, digest_note=None)
         result = fetch_one(capture, client, limiter, sleep_fn=sleep_fn)
         body = result.pop("_body", None)
         if result["fetch_state"] == "fetched" and body is not None:
@@ -242,6 +277,7 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
                     result.update(fetch_state="fetched", raw_path=f"raw/{prev_rel}",
                                   path_collision=prev_collision or None, sha1_fetched=prev_sha1,
                                   source=prev_source, http_status=prev_http, magic_ok=prev_magic,
+                                  digest_ok=prev_digest[0], digest_note=prev_digest[1],
                                   error=f"re-fetch write failed (will retry on next pull): {exc}")
                 else:
                     result.update(fetch_state="failed_5xx", error=f"local write failed: {exc}",
@@ -262,7 +298,8 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
                 result["error"] = f"re-fetch failed ({result['fetch_state']}): {result.get('error')}"
                 result.update(fetch_state="fetched", raw_path=f"raw/{prev_rel}",
                               path_collision=prev_collision or None, sha1_fetched=prev_sha1,
-                              source=prev_source, http_status=prev_http, magic_ok=prev_magic)
+                              source=prev_source, http_status=prev_http, magic_ok=prev_magic,
+                              digest_ok=prev_digest[0], digest_note=prev_digest[1])
             else:
                 result.update(raw_path=None, path_collision=None)
             failed += 1

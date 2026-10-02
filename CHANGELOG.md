@@ -2,6 +2,11 @@
 
 ## Unreleased — SOTA loop (`claude/sota-loop`)
 
+### L1 — CDX digest verification
+- **Added:** each fetched `id_` body is verified against the CDX SHA-1 digest (`digest_ok`,
+  `digest_note` per capture). The report counts verified / mismatched / unverifiable and lists
+  every mismatch; unverifiable bodies carry their reason instead of a guess.
+
 ### L0 — foundation + correctness fixes
 - **Fixed:** links rewritten on pages below the site root now resolve (page-relative paths);
   previously every root-absolute or absolute same-site link on a nested page was broken and

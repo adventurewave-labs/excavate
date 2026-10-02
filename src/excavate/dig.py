@@ -13,6 +13,7 @@ Layout (spec: docs/specs/M0-resurrection-cli.md):
 
 from __future__ import annotations
 
+import base64
 import csv
 import hashlib
 import json
@@ -97,6 +98,11 @@ def _atomic_write(path: Path, text: str) -> None:
 
 def sha1_hex(data: bytes) -> str:
     return hashlib.sha1(data).hexdigest()
+
+
+def sha1_base32(data: bytes) -> str:
+    """The CDX `digest` encoding: base32 of the SHA-1 of the archived payload."""
+    return base64.b32encode(hashlib.sha1(data).digest()).decode("ascii")
 
 
 def safe_relpath(url: str) -> str:

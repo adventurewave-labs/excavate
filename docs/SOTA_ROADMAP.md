@@ -33,12 +33,19 @@ Every loop, in order:
   - Unverified: nothing here has run against the live Wayback Machine or the magpu/strops fixtures
     (those corpora are not in this repo).
 
+- [x] **L1 — CDX digest verification** (50 → 63 tests)
+  - Every `id_` body is hashed (SHA-1, base32) and compared with the CDX `digest`; the verdict is
+    stored per capture as `digest_ok` + `digest_note` and survives re-inventory.
+  - Three honest outcomes: verified, **mismatch** (kept on disk — it is the only copy — and listed
+    in the report), or unverifiable with the reason (`im_` replay, content-encoded payload, no
+    usable CDX digest, pulled before this check existed).
+  - Unverified: the content-encoding rule is inferred, not observed — it assumes Wayback exposes the
+    original encoding as `Content-Encoding` or `X-Archive-Orig-Content-Encoding` on `id_` replies.
+    If it does not, gzip-archived captures will show as mismatches on a live run. Follow-up: hash
+    the raw (undecoded) stream so those become verifiable instead of n/a.
+
 ## Backlog (in order)
 
-- [ ] **L1 — CDX digest verification.** The CDX `digest` is the base32 SHA-1 of the archived payload;
-  compare it with the fetched `id_` body and record `digest_ok` (true / false / n/a for `im_`).
-  Report gets an "integrity" count and a mismatch section. This is the cheapest strong proof that
-  the bytes on disk are the bytes IA archived.
 - [ ] **L2 — encoding-faithful clean.** Detect charset (BOM → `<meta charset>` / `http-equiv` →
   utf-8 → cp1252), decode, rewrite, and re-encode **in the original charset**. A file with no
   rewrites must come out byte-identical. Today everything is re-written as UTF-8 while the page
