@@ -304,6 +304,7 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
                 result.update(raw_path=None, path_collision=None)
             failed += 1
         dig.save_captures(captures)  # persist after every row — kill-safe
+    dig.write_manifest_json(captures)  # keep the spec manifest in step with fetch states
     counts = {state: sum(1 for c in captures if c["fetch_state"] == state)
               for state in ("pending", "fetched", "failed_4xx", "failed_5xx", "skipped")}
     return {"attempted": len(todo), "fetched": fetched, "failed": failed, "totals": counts}

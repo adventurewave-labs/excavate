@@ -14,7 +14,7 @@ from pathlib import Path
 import httpx
 
 from . import __version__
-from .cdx import run_inventory
+from .cdx import MATCH_TYPES, CdxQuery, run_inventory
 from .clean import run_clean
 from .dig import Dig
 from .pull import REQUESTS_PER_MINUTE, RateLimiter, run_pull
@@ -45,14 +45,16 @@ def _open_dig(value: str | None) -> Dig:
 def cmd_inventory(args: argparse.Namespace) -> int:
     if not DOMAIN_RE.match(args.domain):
         raise SystemExit(f"not a plain domain: {args.domain!r} (no paths, no wildcards)")
+    query = CdxQuery(args.domain, match=args.match, from_ts=args.from_ts, to_ts=args.to_ts)  # validates first
     dig = Dig.create(Path(args.output or DEFAULT_DIG_BASE), args.domain)
     try:
         with _client() as client:
-            summary = run_inventory(args.domain, dig, client)
+            summary = run_inventory(args.domain, dig, client, query)
     except json.JSONDecodeError as exc:
         raise SystemExit(f"CDX returned non-JSON (service degraded?): {exc}") from exc
     print(
-        f"inventoried {summary['domain']}: {summary['raw_rows']} raw CDX rows → "
+        f"inventoried {summary['domain']}: {summary['raw_rows']} raw CDX rows "
+        f"({summary['pages']} page{'s' if summary['pages'] != 1 else ''}) → "
         f"{summary['unique_urls']} unique URLs ({summary['pending']} pending, {summary['skipped']} skipped)"
     )
     print(f"dig: {dig.root}")
@@ -112,6 +114,10 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("inventory", help="CDX survey of a domain -> manifest (no collapse, no filters)")
     p.add_argument("domain", help="domain to inventory, e.g. magpu.com")
     p.add_argument("--output", default=None, help="dig base directory (default: digs/)")
+    p.add_argument("--match", choices=MATCH_TYPES, default="prefix",
+                   help="scope: prefix (default), host (exact host), domain (subdomains too)")
+    p.add_argument("--from", dest="from_ts", default=None, metavar="YYYY[MMDD…]", help="earliest capture (4–14 digits)")
+    p.add_argument("--to", dest="to_ts", default=None, metavar="YYYY[MMDD…]", help="latest capture (4–14 digits)")
     p.set_defaults(func=cmd_inventory)
 
     p = sub.add_parser("pull", help="fetch captures per manifest (resumable, rate-limited)")

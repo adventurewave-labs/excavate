@@ -85,11 +85,22 @@ Every loop, in order:
     Not handled: the `_____WB$wombat$assign$function_____` wrapper around `js_` files (we do not
     clean `.js`), and chrome inside framesets fetched with `if_`.
 
+- [x] **L5 — CDX inventory robustness** (114 → 129 tests)
+  - Inventory is paginated (`showResumeKey` + `limit=5000`, resume keys followed, loop guard). It
+    was a single unpaginated request — a large site would have been silently truncated or timed out.
+  - CDX calls go through the same rate limiter and 429/5xx/transport backoff as `pull`; if a page
+    still fails, the inventory aborts and **nothing is written** (no partial inventory).
+  - `inventory --match prefix|host|domain` and `--from/--to` (validated before any request). Still
+    no collapse / mimetype / status filter on the wire — a test pins the request parameters.
+  - `manifest.json` (required by the M0 spec, never written before): the spec's seven fields per
+    URL plus the query and timestamp; refreshed after `pull`.
+  - Unverified: the resume-key page shape (`[], ["key"]` tail, header repeated per page) is from the
+    CDX docs, not observed live. `--match domain` pulls subdomain captures, but `clean` still treats
+    other hosts as external and same-path files from two hosts collide (disclosed, suffixed) —
+    per-host layout is a follow-up for L10.
+
 ## Backlog (in order)
 
-- [ ] **L5 — CDX inventory robustness.** Pagination (`showResumeKey` + `limit`), the CDX call goes
-  through the rate limiter with 429/5xx backoff, `--match prefix|host|domain` (subdomains),
-  `--from/--to` bounds, and `manifest.json` (required by the M0 spec, not yet written).
 - [ ] **L6 — capture selection + fallback chain.** `--at YYYYMMDD` picks the capture nearest a date
   (a coherent era instead of "latest of everything"). When the chosen capture fails permanently,
   fall back to the next-best capture of the same URL from `manifest.csv` before declaring it lost;

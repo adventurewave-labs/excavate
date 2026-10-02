@@ -2,6 +2,14 @@
 
 ## Unreleased — SOTA loop (`claude/sota-loop`)
 
+### L5 — CDX inventory robustness
+- **Fixed:** the CDX inventory is paginated; previously one unpaginated request could truncate a
+  large site without notice.
+- **Changed:** CDX requests are rate-limited and backed off like `pull`; a failed inventory writes
+  nothing.
+- **Added:** `inventory --match prefix|host|domain`, `--from`, `--to`; `manifest.json` (spec
+  manifest: url, timestamp, status, mimetype, digest, sha1_fetched, fetch_state).
+
 ### L4 — complete Wayback chrome removal
 - **Added:** `excavate.chrome` strips the Wayback toolbar, replay script includes and init
   snippets, banner stylesheets and archive trailer comments (HTML and CSS); each removal is logged

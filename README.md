@@ -21,7 +21,7 @@ src/excavate/                      # CLI (M0: inventory · pull · clean · repo
 
 ## Pipeline (Resurrection, M0)
 ```
-domain ──inventory──▶ manifest (CDX, no filters)
+domain ──inventory──▶ manifest (CDX, paginated, no filters; --match/--from/--to scope)
        ──pull────────▶ raw captures (id_ + im_ fallback, ≤30 req/min, resumable)
        ──clean───────▶ site/  (de-Wayback, rewrites logged, never fake missing files)
        ──report──────▶ VERIFICATION-REPORT.md (completeness accounting)

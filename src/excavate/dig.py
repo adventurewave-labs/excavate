@@ -21,6 +21,7 @@ import os
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+MANIFEST_FIELDS = ("url", "timestamp", "status", "mimetype", "digest", "sha1_fetched", "fetch_state")
 FETCH_STATES = ("pending", "fetched", "failed_4xx", "failed_5xx", "skipped")
 
 
@@ -79,6 +80,20 @@ class Dig:
     def raw_manifest_rows(self) -> list[dict]:
         with self.raw_manifest_path().open(newline="") as fh:
             return list(csv.DictReader(fh))
+
+    def write_manifest_json(self, caps: list[dict]) -> None:
+        """manifest.json — the M0 spec's machine-readable manifest: one entry
+        per URL with exactly the spec's fields, plus what was asked of CDX.
+        A snapshot export; captures.json remains the working state."""
+        meta = self.meta()
+        payload = {
+            "domain": meta["domain"],
+            "query": meta.get("query"),
+            "inventoried_at": meta.get("inventoried_at"),
+            "raw_rows": meta.get("raw_rows"),
+            "captures": [{field: cap.get(field) for field in MANIFEST_FIELDS} for cap in caps],
+        }
+        _atomic_write(self.root / "manifest.json", json.dumps(payload, indent=2))
 
     # -- captures (the resumable working set) ---------------------------------
     def load_captures(self) -> list[dict]:
