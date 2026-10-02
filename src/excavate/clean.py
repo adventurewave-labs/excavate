@@ -18,6 +18,7 @@ import shutil
 from pathlib import Path
 
 from .dig import Dig, safe_relpath
+from .encoding import decode_document, encode_document
 
 # /web/<timestamp><mode>/ prefix inside im_-sourced or stale-linked content —
 # absolute and path-relative forms, any case (real pages vary)
@@ -161,13 +162,8 @@ def clean_text(text: str, domain: str, rel_path: str, is_css: bool) -> tuple[str
     return text, log
 
 
-def _decode(data: bytes) -> str:
-    for encoding in ("utf-8", "cp1252"):
-        try:
-            return data.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    return data.decode("utf-8", errors="replace")
+def _decode(data: bytes, is_css: bool = False) -> str:
+    return decode_document(data, is_css).text
 
 
 def internal_targets(text: str, domain: str, page_rel: str = "") -> set[str]:
@@ -229,6 +225,7 @@ def run_clean(dig: Dig) -> dict:
     captures = dig.load_captures()
     all_log: list[str] = []
     internal: set[str] = set()
+    encodings: dict[str, int] = {}
 
     pulled, valid, errors = effective_pulled(dig, captures)
     all_log.extend(errors)
@@ -242,7 +239,7 @@ def run_clean(dig: Dig) -> dict:
         ledger.write_text(prior.rstrip() + "\n\n" + "\n".join(all_log)
                           + "\nno cleanable captures — site/ and prior ledger left untouched\n",
                           encoding="utf-8")
-        return {"cleaned": 0, "rewrites": 0, "never_crawled": []}
+        return {"cleaned": 0, "rewrites": 0, "never_crawled": [], "encodings": {}}
 
     # full re-clean: wipe stale output so no orphan survives from earlier runs
     if dig.site_dir.exists():
@@ -257,9 +254,16 @@ def run_clean(dig: Dig) -> dict:
         target = dig.site_dir / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         if rel.lower().endswith(TEXT_SUFFIXES):
-            text = _decode(raw_file.read_bytes())
-            text, log = clean_text(text, domain, rel, is_css=rel.lower().endswith(".css"))
-            target.write_text(text, encoding="utf-8")
+            is_css = rel.lower().endswith(".css")
+            data = raw_file.read_bytes()
+            doc = decode_document(data, is_css)
+            text, log = clean_text(doc.text, domain, rel, is_css=is_css)
+            # no rewrite → the original bytes, untouched; otherwise re-encode in
+            # the page's own charset so its declaration stays true
+            target.write_bytes(data if text == doc.text else encode_document(text, doc, is_css))
+            encodings[doc.codec] = encodings.get(doc.codec, 0) + 1
+            if doc.note:
+                all_log.append(f"- encoding: `{rel}` — {doc.note}; kept as `{doc.codec}`")
             all_log.extend(log)
             internal |= internal_targets(text, domain, page_rel=rel)
         else:
@@ -279,4 +283,5 @@ def run_clean(dig: Dig) -> dict:
     )
     never_crawled = sorted(t for t in internal if t not in pulled and t != "")
     rewrites = sum(1 for line in all_log if REWRITE_LINE.match(line))
-    return {"cleaned": len(valid), "rewrites": rewrites, "never_crawled": never_crawled}
+    return {"cleaned": len(valid), "rewrites": rewrites, "never_crawled": never_crawled,
+            "encodings": dict(sorted(encodings.items()))}

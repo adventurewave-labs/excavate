@@ -85,6 +85,8 @@ def cmd_clean(args: argparse.Namespace) -> int:
         f"{summary['rewrites']} rewrites logged (REWRITES.md), "
         f"{len(summary['never_crawled'])} never-crawled targets"
     )
+    if summary["encodings"]:
+        print("  charsets kept: " + ", ".join(f"{codec} ×{n}" for codec, n in summary["encodings"].items()))
     return 0
 
 

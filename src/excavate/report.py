@@ -18,7 +18,8 @@ def _never_crawled(dig: Dig, captures: list[dict]) -> list[str]:
     for page in dig.site_dir.rglob("*"):
         if page.is_file() and page.suffix.lower() in (".html", ".htm", ".css"):
             page_rel = page.relative_to(dig.site_dir).as_posix()
-            targets |= internal_targets(_decode(page.read_bytes()), dig.domain, page_rel=page_rel)
+            is_css = page.suffix.lower() == ".css"
+            targets |= internal_targets(_decode(page.read_bytes(), is_css), dig.domain, page_rel=page_rel)
     return sorted(t for t in targets if t not in pulled and t != "")
 
 

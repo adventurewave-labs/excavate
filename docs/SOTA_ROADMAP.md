@@ -44,12 +44,20 @@ Every loop, in order:
     If it does not, gzip-archived captures will show as mismatches on a live run. Follow-up: hash
     the raw (undecoded) stream so those become verifiable instead of n/a.
 
+- [x] **L2 — encoding-faithful clean** (63 → 82 tests)
+  - New `encoding.py`: BOM → declared charset (`<meta>` / CSS `@charset`, WHATWG label mapping) →
+    UTF-8 → windows-1252 → byte-transparent latin-1. A candidate is accepted only if it decodes
+    strictly and re-encodes to the exact original bytes.
+  - Cleaned pages are re-encoded in their **own** charset (was: always UTF-8 under an unchanged
+    `charset=iso-8859-1` declaration → mojibake). A page with no rewrites is copied byte-for-byte.
+  - A wrong or unknown charset declaration is disclosed in `REWRITES.md`; a rewritten URL the
+    charset cannot express becomes an HTML character reference / CSS escape, never `?`.
+  - Unverified: fixtures are synthetic (ISO-8859-1, Shift_JIS, CP437, KOI8-R, UTF-8/16 BOMs), not
+    real captures. No statistical sniffing — an undeclared Shift_JIS/KOI8 page is handled
+    byte-transparently (correct output, but its link scan runs on latin-1-decoded text).
+
 ## Backlog (in order)
 
-- [ ] **L2 — encoding-faithful clean.** Detect charset (BOM → `<meta charset>` / `http-equiv` →
-  utf-8 → cp1252), decode, rewrite, and re-encode **in the original charset**. A file with no
-  rewrites must come out byte-identical. Today everything is re-written as UTF-8 while the page
-  still declares its old charset → mojibake on legacy pages. CP437/Shift-JIS/ISO-8859-x fixtures.
 - [ ] **L3 — tokenizer-based rewriting.** Replace the regex attribute scan with an
   `html.parser`-driven span rewriter (edits only the URL bytes, leaves all other markup untouched):
   unquoted attributes, `srcset`, `background`, `poster`, `data`, `longdesc`, `<meta refresh>`,
