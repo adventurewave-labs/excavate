@@ -2,6 +2,12 @@
 
 ## Unreleased — SOTA loop (`claude/sota-loop`)
 
+### L7 — SQLite state store
+- **Changed:** dig state lives in `dig.sqlite`; `pull` updates one row per URL (constant cost at
+  any dig size) instead of rewriting `captures.json` after every fetch.
+- **Kept:** `captures.json` as a per-command export; legacy digs migrate automatically; an
+  externally edited `captures.json` is re-imported.
+
 ### L6 — capture selection + fallback chain
 - **Added:** `inventory --at <date>` selects each URL's capture nearest a date instead of its latest.
 - **Added:** `pull` falls back through a URL's other captures when the wanted one is permanently

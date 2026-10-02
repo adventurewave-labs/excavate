@@ -111,11 +111,22 @@ Every loop, in order:
     Machine — the mechanism is tested, the recovery rate is unknown until a live run. Each fallback
     attempt costs up to 2 requests of the 30/min budget.
 
+- [x] **L7 — SQLite state store** (146 → 160 tests)
+  - Working state is `dig.sqlite` (WAL); `pull` commits one row per fetched URL instead of
+    rewriting the whole `captures.json`. Measured here: per-row write is ~1.2 ms at 1k, 20k and
+    100k URLs; the old whole-file rewrite was 41 ms at 20k and 211 ms at 100k — about six hours of
+    cumulative disk writes over a 100k-URL pull.
+  - `captures.json` is still written as an export, once per command (including a pull cut short by
+    Ctrl-C). Existing digs migrate on first use. If the JSON was changed by anything other than our
+    own export (hand-edited, or written by an older version) it is re-imported — the file a human
+    can see is never ignored.
+  - Resume acceptance test from the M0 spec now exists: kill mid-run → zero duplicate fetches.
+  - Unverified: a hard kill (SIGKILL / power loss) mid-pull leaves `captures.json` stale until the
+    next command; the database is correct and wins, but that path is covered by a simulated test,
+    not a real kill. Not designed for two `excavate` processes on one dig at the same time.
+
 ## Backlog (in order)
 
-- [ ] **L7 — SQLite state store.** `dig.sqlite` (WAL) replaces rewriting the whole `captures.json`
-  after every row (O(n²) at 100k URLs; PRD FR-E2 already decides on SQLite). Transparent migration
-  from existing digs; `captures.json` still exported for humans and old tooling.
 - [ ] **L8 — crawl-check stage (spec stage 4).** Its own module and `excavate check`: internal link
   graph, reachability from the entry page, orphans, and the strops-style accounting
   (referenced / recovered / never-crawled) written to `crawl.json` and consumed by the report.

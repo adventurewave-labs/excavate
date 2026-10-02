@@ -17,6 +17,7 @@ docs/PRD.md                        # product master (v0.4)
 docs/research/                     # 2026-09-11 research addendum (market, stack, naming)
 docs/specs/                        # delta specs per milestone (rig Law 5)
 src/excavate/                      # CLI (M0: inventory · pull · clean · report)
+digs/<domain>/                     # one dig: dig.sqlite (state) · captures.json (export) · manifest.* · raw/ · site/ (git-ignored)
 ```
 
 ## Pipeline (Resurrection, M0)

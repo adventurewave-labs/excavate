@@ -257,6 +257,17 @@ def _claim_path(claimed: dict[str, str], claimed_ci: dict[str, str], rel: str, u
 
 def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
              limiter: RateLimiter | None = None, sleep_fn=time.sleep) -> dict:
+    try:
+        return _run_pull(dig, client, limit, limiter, sleep_fn)
+    finally:
+        # rows are committed one by one as they finish; the readable export is
+        # refreshed once per run — including a run cut short by Ctrl-C or an error
+        if dig.db_path.exists():
+            dig.export_captures_json()
+
+
+def _run_pull(dig: Dig, client: httpx.Client, limit: int | None,
+              limiter: RateLimiter | None, sleep_fn) -> dict:
     limiter = limiter or RateLimiter(sleep_fn=sleep_fn)
     captures = dig.load_captures()
 
@@ -321,7 +332,7 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
                     claimed.pop(rel, None)
                     claimed_ci.pop(rel.lower(), None)
                 failed += 1
-                dig.save_captures(captures)
+                dig.save_capture(result)
                 continue
             result["raw_path"] = f"raw/{rel}"
             result["path_collision"] = collision or None
@@ -339,7 +350,7 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
             else:
                 result.update(raw_path=None, path_collision=None)
             failed += 1
-        dig.save_captures(captures)  # persist after every row — kill-safe
+        dig.save_capture(result)  # one row, after every row — kill-safe at any dig size
     dig.write_manifest_json(captures)  # keep the spec manifest in step with fetch states
     counts = {state: sum(1 for c in captures if c["fetch_state"] == state)
               for state in ("pending", "fetched", "failed_4xx", "failed_5xx", "skipped")}

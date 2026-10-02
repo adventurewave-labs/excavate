@@ -256,7 +256,7 @@ def apply_inventory(dig: Dig, rows: list[dict], query: CdxQuery | None = None, p
     caps = resolve_best(rows, at)
     if not caps:
         raise SystemExit("CDX returned zero usable rows — refusing to write an empty inventory")
-    if (dig.root / "captures.json").exists():
+    if dig.has_state():
         existing = {c["url"]: c for c in dig.load_captures()}
         for cap in caps:
             prev = existing.get(cap["url"])

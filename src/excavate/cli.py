@@ -36,8 +36,8 @@ def _client() -> httpx.Client:
 def _open_dig(value: str | None) -> Dig:
     if value:
         dig = Dig(Path(value))
-        if not (dig.root / "captures.json").exists():
-            raise SystemExit(f"not a dig directory (no captures.json): {value}")
+        if not dig.has_state():
+            raise SystemExit(f"not a dig directory (no dig.sqlite or captures.json): {value}")
         return dig
     return Dig.latest(Path(DEFAULT_DIG_BASE))
 
