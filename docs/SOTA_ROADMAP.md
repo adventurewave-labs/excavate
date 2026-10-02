@@ -211,11 +211,23 @@ Every loop, in order:
     tool (`bagit.py` from the Library of Congress, or bagger). ZIP uses deflate, not zstd (the PRD's
     suggestion needs Python 3.14). No WACZ output; that part of FR-E14 is not started.
 
+- [x] **L14 — operator UX** (249 → 266 tests)
+  - `excavate run <domain>`: inventory → pull → clean → check → scan → report in one command
+    (`--limit`, `--at`, `--from/--to`, `--match`, `--discover`, `--no-twins`). It says what is left
+    and how to resume. `--strict` exits 1 unless the pull finished, every link resolves and the
+    publish gate is clean.
+  - `excavate status`: counts by state, site size, link accounting, gate verdict, last event and the
+    next command to run — no network.
+  - `--json` on every command (before or after the subcommand): one JSON object with `result`,
+    `messages`, `exit_code`, and `error` on failure. Exit codes are documented in `--help`.
+  - `pull`: per-URL progress and a lower-bound ETA on stderr (`--quiet` to silence); `--dry-run`
+    prints "921 URLs ≈ at least 31 min at 30 req/min" and fetches nothing.
+  - Unverified: `run` is exercised end to end only against a mocked archive. The ETA is the rate
+    budget alone — real runs are slower (fallbacks, `im_` retries, backoff), by how much is unknown.
+    `pull` still exits 0 with failures left over; only `run --strict` turns that into a failing code.
+
 ## Backlog (in order)
 
-- [ ] **L14 — operator UX.** `excavate run <domain>` (inventory → pull → clean → check → report),
-  `status`, `--json` on every command, meaningful exit codes, progress + ETA, and `pull --dry-run`
-  ("921 URLs ≈ 31 min at 30 req/min").
 - [ ] **L15 — wrap-up.** One end-to-end golden fixture (synthetic site served by a mocked IA
   transport, exercising every loop above), property tests for `safe_relpath` and the rewriter,
   refresh README / M0 spec status / CHANGELOG, and a final summary of what is still unverified.

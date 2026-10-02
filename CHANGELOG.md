@@ -2,6 +2,10 @@
 
 ## Unreleased — SOTA loop (`claude/sota-loop`)
 
+### L14 — operator UX
+- **Added:** `excavate run <domain>` (whole pipeline, `--strict`), `excavate status`, `--json` on
+  every command, documented exit codes, `pull --dry-run`, per-URL progress with ETA (`--quiet`).
+
 ### L13 — BagIt export
 - **Added:** `excavate export` — RFC 8493 BagIt bag (site, raw captures, paper trail) with optional
   deterministic ZIP; `excavate export --verify` validates any bag directory or ZIP.

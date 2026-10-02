@@ -257,11 +257,12 @@ def _claim_path(claimed: dict[str, str], claimed_ci: dict[str, str], rel: str, u
 
 
 def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
-             limiter: RateLimiter | None = None, sleep_fn=time.sleep) -> dict:
+             limiter: RateLimiter | None = None, sleep_fn=time.sleep, progress=None) -> dict:
+    """`progress(done, total, capture)` is called after every row is persisted."""
     asked = selection_hash(dig.load_captures())
     summary: dict | None = None
     try:
-        summary = _run_pull(dig, client, limit, limiter, sleep_fn)
+        summary = _run_pull(dig, client, limit, limiter, sleep_fn, progress)
         return summary
     finally:
         # rows are committed one by one as they finish; the readable export is
@@ -273,7 +274,7 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
 
 
 def _run_pull(dig: Dig, client: httpx.Client, limit: int | None,
-              limiter: RateLimiter | None, sleep_fn) -> dict:
+              limiter: RateLimiter | None, sleep_fn, progress=None) -> dict:
     limiter = limiter or RateLimiter(sleep_fn=sleep_fn)
     captures = dig.load_captures()
 
@@ -296,6 +297,15 @@ def _run_pull(dig: Dig, client: httpx.Client, limit: int | None,
     if limit is not None and limit > 0:
         todo = todo[:limit]
     fetched = failed = 0
+    done = 0
+
+    def persist(row: dict) -> None:
+        nonlocal done
+        dig.save_capture(row)  # one row, after every row — kill-safe at any dig size
+        done += 1
+        if progress is not None:
+            progress(done, len(todo), row)
+
     for capture in todo:
         prev_rel = capture.get("raw_path")
         prev_rel = prev_rel[len("raw/"):] if prev_rel and prev_rel.startswith("raw/") else None
@@ -338,7 +348,7 @@ def _run_pull(dig: Dig, client: httpx.Client, limit: int | None,
                     claimed.pop(rel, None)
                     claimed_ci.pop(rel.lower(), None)
                 failed += 1
-                dig.save_capture(result)
+                persist(result)
                 continue
             result["raw_path"] = f"raw/{rel}"
             result["path_collision"] = collision or None
@@ -356,7 +366,7 @@ def _run_pull(dig: Dig, client: httpx.Client, limit: int | None,
             else:
                 result.update(raw_path=None, path_collision=None)
             failed += 1
-        dig.save_capture(result)  # one row, after every row — kill-safe at any dig size
+        persist(result)
     dig.write_manifest_json(captures)  # keep the spec manifest in step with fetch states
     counts = {state: sum(1 for c in captures if c["fetch_state"] == state)
               for state in ("pending", "fetched", "failed_4xx", "failed_5xx", "skipped")}

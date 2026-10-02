@@ -32,6 +32,15 @@ domain ──inventory──▶ manifest (CDX, paginated, no filters; --match/--
        ──export──────▶ BagIt bag (RFC 8493): site + raw captures + paper trail, verifiable anywhere
 ```
 
+## Quick start
+```bash
+excavate run magpu.com            # inventory → pull → clean → check → scan → report
+excavate status                   # where the dig stands, what to run next
+excavate pull --dry-run           # how many URLs, how long — fetches nothing
+excavate export --zip             # BagIt bag: site + raw captures + paper trail
+```
+Every command takes `--json`. Exit codes: 0 done · 1 failed or a gate said no · 2 usage.
+
 ## Development
 ```bash
 pip install -e ".[dev]"
