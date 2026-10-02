@@ -18,18 +18,16 @@ import shutil
 from pathlib import Path
 from urllib.parse import urljoin
 
+from .chrome import strip_chrome
 from .dig import Dig, safe_relpath
 from .encoding import decode_document, encode_document
 from .rewrite import scan
 
 # /web/<timestamp><mode>/ prefix inside im_-sourced or stale-linked content —
 # absolute and path-relative forms, any case (real pages vary)
-WAYBACK_PREFIX = re.compile(r"https?://web\.archive\.org/web/\d{6,14}(?:id_|im_|js_|cs_)?/", re.IGNORECASE)
-WAYBACK_PREFIX_REL = re.compile(r"^/web/\d{6,14}(?:id_|im_|js_|cs_)?/", re.IGNORECASE)
-WAYBACK_PREFIX_PROTOREL = re.compile(r"^//web\.archive\.org/web/\d{6,14}(?:id_|im_|js_|cs_)?/", re.IGNORECASE)
-
-# Wayback toolbar assets injected into im_ replay pages
-CHROME_ASSETS = re.compile(r"<link[^>]+(banner-styles\.css|iconochive\.css)[^>]*>", re.IGNORECASE)
+WAYBACK_PREFIX = re.compile(r"https?://web\.archive\.org/web/\d{6,14}(?:[a-z]{2}_)?/", re.IGNORECASE)
+WAYBACK_PREFIX_REL = re.compile(r"^/web/\d{6,14}(?:[a-z]{2}_)?/", re.IGNORECASE)
+WAYBACK_PREFIX_PROTOREL = re.compile(r"^//web\.archive\.org/web/\d{6,14}(?:[a-z]{2}_)?/", re.IGNORECASE)
 
 # URL discovery lives in rewrite.scan (a span tokenizer) — one scanner feeds
 # both the rewriter and the link graph
@@ -42,6 +40,7 @@ _OTHER_SCHEME = re.compile(r"(?!https?:)[A-Za-z][A-Za-z0-9+.\-]*:", re.IGNORECAS
 # a "rewrite" proper: `before` → `after` — chrome strips, collision notes and
 # ERROR lines are disclosed in the ledger but counted separately
 REWRITE_LINE = re.compile(r"^- `.*` → `.*` \(")
+CHROME_LINE = re.compile(r"^- wayback chrome removed \(")
 
 
 def same_site_host(host: str, domain: str) -> bool:
@@ -155,12 +154,10 @@ def clean_text(text: str, domain: str, rel_path: str, is_css: bool) -> tuple[str
     """Rewrite one HTML/CSS document; returns (new_text, log_lines)."""
     log: list[str] = []
 
-    def sub_chrome(match: re.Match) -> str:
-        log.append(f"- wayback chrome removed ({rel_path}): {match.group(0)[:80]}…")
-        return "<!-- wayback chrome removed -->"
-
-    if not is_css:
-        text = CHROME_ASSETS.sub(sub_chrome, text)
+    # chrome first: its markup carries /_static/ URLs that must never be
+    # mistaken for site links by the rewriter or the link graph
+    text, removed = strip_chrome(text, is_css)
+    log.extend(f"- wayback chrome removed ({rel_path}): {item}" for item in removed)
     document = scan(text, is_css)
     base_abs = _base_url(domain, rel_path, document.base_href)
 
@@ -256,7 +253,7 @@ def run_clean(dig: Dig) -> dict:
         ledger.write_text(prior.rstrip() + "\n\n" + "\n".join(all_log)
                           + "\nno cleanable captures — site/ and prior ledger left untouched\n",
                           encoding="utf-8")
-        return {"cleaned": 0, "rewrites": 0, "never_crawled": [], "encodings": {}}
+        return {"cleaned": 0, "rewrites": 0, "never_crawled": [], "encodings": {}, "chrome_removed": 0}
 
     # full re-clean: wipe stale output so no orphan survives from earlier runs
     if dig.site_dir.exists():
@@ -301,4 +298,5 @@ def run_clean(dig: Dig) -> dict:
     never_crawled = sorted(t for t in internal if t not in pulled and t != "")
     rewrites = sum(1 for line in all_log if REWRITE_LINE.match(line))
     return {"cleaned": len(valid), "rewrites": rewrites, "never_crawled": never_crawled,
+            "chrome_removed": sum(1 for line in all_log if CHROME_LINE.match(line)),
             "encodings": dict(sorted(encodings.items()))}

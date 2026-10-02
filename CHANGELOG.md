@@ -2,6 +2,13 @@
 
 ## Unreleased — SOTA loop (`claude/sota-loop`)
 
+### L4 — complete Wayback chrome removal
+- **Added:** `excavate.chrome` strips the Wayback toolbar, replay script includes and init
+  snippets, banner stylesheets and archive trailer comments (HTML and CSS); each removal is logged
+  by kind and `clean` reports the count.
+- **Changed:** all replay modifiers (`if_`, `fw_`, `oe_`, `mp_`, …) are recognised in links, not
+  just `id_ im_ js_ cs_`. One marker comment per document instead of one per removed element.
+
 ### L3 — tokenizer-based rewriting
 - **Changed:** link discovery and rewriting use a span tokenizer (`excavate.rewrite`) instead of
   a regex over `href|src|action`; only the URL spans are edited.

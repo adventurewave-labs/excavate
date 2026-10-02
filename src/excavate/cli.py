@@ -83,6 +83,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
     print(
         f"clean: {summary['cleaned']} files → {dig.site_dir}, "
         f"{summary['rewrites']} rewrites logged (REWRITES.md), "
+        f"{summary['chrome_removed']} pieces of Wayback chrome removed, "
         f"{len(summary['never_crawled'])} never-crawled targets"
     )
     if summary["encodings"]:

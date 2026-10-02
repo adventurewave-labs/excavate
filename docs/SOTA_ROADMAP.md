@@ -71,12 +71,22 @@ Every loop, in order:
     Not handled: URLs built in JavaScript, `<applet archive>`, SVG `xlink:href`, conditional
     comments. Wayback prefixes with a short (<6 digit) timestamp are not recognised.
 
+- [x] **L4 — complete Wayback chrome removal** (103 → 114 tests)
+  - New `chrome.py` removes the toolbar block, the `/_static/js/` playback/wombat/ruffle includes,
+    the `__wm.init` / `__wm.wombat` / `archive_analytics` init scripts, banner stylesheets, the
+    include end marker and the `FILE ARCHIVED ON` / `playback timings` trailers (HTML and CSS).
+    A replayed fixture page cleans back to its original byte for byte, bar one marker comment.
+  - Every removal is logged by kind and counted (`chrome_removed`), separately from URL rewrites.
+    All two-letter replay modifiers (`if_ fw_ oe_ mp_ …`) are stripped from links.
+  - Patterns are narrow on purpose: a site's own `/static/js/…` or `banner-styles.css` survives;
+    legacy `/static/js/analytics.js` is only removed on a page that carries another Wayback marker.
+  - Unverified: the fixture is written from memory of what replay injects, not captured from a
+    live `im_` response — whether the toolbar's trailing newline belongs to the page is a guess.
+    Not handled: the `_____WB$wombat$assign$function_____` wrapper around `js_` files (we do not
+    clean `.js`), and chrome inside framesets fetched with `if_`.
+
 ## Backlog (in order)
 
-- [ ] **L4 — complete Wayback chrome removal.** Toolbar block
-  (`<!-- BEGIN WAYBACK TOOLBAR INSERT -->…<!-- END … -->`), `/_static/` script/link injections,
-  wombat / `__wm` init scripts, the `FILE ARCHIVED ON` trailer comment, and all replay modifiers
-  (`id_ im_ js_ cs_ if_ fw_ oe_ mp_`). Each removal logged. Fixtures modelled on real `im_` output.
 - [ ] **L5 — CDX inventory robustness.** Pagination (`showResumeKey` + `limit`), the CDX call goes
   through the rate limiter with 429/5xx backoff, `--match prefix|host|domain` (subdomains),
   `--from/--to` bounds, and `manifest.json` (required by the M0 spec, not yet written).
