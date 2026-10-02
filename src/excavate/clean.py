@@ -219,6 +219,22 @@ def internal_targets(text: str, domain: str, page_rel: str = "") -> set[str]:
     return targets
 
 
+def external_hosts(text: str, domain: str, page_rel: str = "") -> list[str]:
+    """Host of every http(s) link in a document that leaves the site (one
+    entry per link) — what the site leaned on that this dig does not hold."""
+    document = scan(text, is_css=page_rel.lower().endswith(".css"))
+    base_abs = _base_url(domain, page_rel, document.base_href)
+    hosts: list[str] = []
+    for url in document.urls():
+        url = _strip_wayback(url.strip())
+        if base_abs is not None and url and not url.lower().startswith(_SKIP_PREFIXES):
+            url = urljoin(base_abs, url)
+        match = re.match(r"(?i)(?:https?:)?//([^/?#:]+)", url)
+        if match and not same_site_host(match.group(1), domain):
+            hosts.append(match.group(1).lower())
+    return hosts
+
+
 def site_rel(capture: dict) -> str:
     """Site path mirrors the raw tree — derived from raw_path when present."""
     raw_path = capture.get("raw_path") or ""

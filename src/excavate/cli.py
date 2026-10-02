@@ -18,6 +18,7 @@ from .cdx import MATCH_TYPES, CdxQuery, parse_timestamp, run_inventory
 from .clean import run_clean
 from .crawl import accounting_line, run_check
 from .dig import Dig
+from .discover import DEFAULT_LIMIT, run_discover
 from .pull import REQUESTS_PER_MINUTE, RateLimiter, run_pull
 from .report import run_report
 
@@ -114,6 +115,24 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 1 if args.strict and counts["unresolved"] else 0
 
 
+def cmd_discover(args: argparse.Namespace) -> int:
+    dig = _open_dig(args.dig)
+    with _client() as client:
+        summary = run_discover(dig, client, limit=args.limit, recheck=args.recheck)
+    print(
+        f"discover: {summary['never_archived']} referenced files not in the manifest; "
+        f"{summary['looked_up']} looked up ({summary['lookups']} CDX requests), "
+        f"{summary['found']} found ({summary['fetchable']} fetchable), {summary['still_missing']} confirmed absent"
+    )
+    extras = [f"{summary[key]} {label}" for key, label in (("already_checked", "checked on an earlier run"),
+              ("irreversible", "not reversible to a URL"), ("deferred", "left for the next run (--limit)")) if summary[key]]
+    if extras:
+        print("  " + ", ".join(extras))
+    if summary["fetchable"]:
+        print("  next: excavate pull, then clean and report")
+    return 0
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     dig = _open_dig(args.dig)
     summary = run_report(dig)
@@ -158,6 +177,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dig", default=None, help="dig directory (default: most recent under digs/)")
     p.add_argument("--strict", action="store_true", help="exit 1 if any referenced file is not on disk")
     p.set_defaults(func=cmd_check)
+
+    p = sub.add_parser("discover", help="ask CDX for files the pages link to but the inventory missed (adds them as pending)")
+    p.add_argument("--dig", default=None, help="dig directory (default: most recent under digs/)")
+    p.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help=f"max files to look up this run (default {DEFAULT_LIMIT})")
+    p.add_argument("--recheck", action="store_true", help="forget earlier lookups and ask again")
+    p.set_defaults(func=cmd_discover)
 
     p = sub.add_parser("report", help="emit VERIFICATION-REPORT.md (completeness accounting)")
     p.add_argument("--dig", default=None, help="dig directory (default: most recent under digs/)")

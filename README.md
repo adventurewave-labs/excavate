@@ -26,6 +26,7 @@ domain ──inventory──▶ manifest (CDX, paginated, no filters; --match/--
        ──pull────────▶ raw captures (id_ + im_ fallback, alternate-capture fallback, ≤30 req/min, resumable)
        ──clean───────▶ site/  (de-Wayback, rewrites logged, never fake missing files)
        ──check───────▶ crawl.json (links walked: recovered / missing / orphans)
+       ──discover────▶ exact-URL CDX lookups for linked-but-missing files (then pull again)
        ──report──────▶ VERIFICATION-REPORT.md (completeness accounting)
 ```
 

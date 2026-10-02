@@ -2,6 +2,12 @@
 
 ## Unreleased — SOTA loop (`claude/sota-loop`)
 
+### L10 — never-crawled recovery
+- **Added:** `excavate discover` — exact-URL CDX lookups for files the site links to but the
+  manifest lacks; hits are added as pending captures (`discovered_by`), lookups are remembered.
+- **Added:** external hosts the site links to are listed in `crawl.json` and the report.
+- **Fixed:** re-running `inventory` keeps captures added by `discover`.
+
 ### L9 — asset twin swap
 - **Added:** dead links are pointed at a surviving twin that is on disk (case, extension spelling,
   index document, same-medium format such as `.mp3` → `.ogg`); each swap is logged with its reason

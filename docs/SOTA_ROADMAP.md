@@ -151,11 +151,24 @@ Every loop, in order:
     what the visitor gets (a different encoding, or an image in another format) — that is disclosed
     but is a judgment call; image format twins (`.gif` → `.png`) are the most debatable.
 
+- [x] **L10 — never-crawled recovery** (191 → 201 tests)
+  - New `excavate discover [--limit N] [--recheck]`: for each file the pages link to that is not
+    in the manifest, ask CDX for that exact URL (scheme-, `www`- and case-insensitive on IA's side;
+    ignores the inventory's `--from/--to` window). Hits join the dig as pending captures marked
+    `discovered_by`; their CDX rows are appended to `manifest.csv`. Then `pull` → `clean` → `report`.
+  - Budgeted and resumable: one rate-limited request per candidate, lookups remembered in
+    `discover.json`, `--limit` defers the rest, an error mid-run keeps what was found. Re-inventory
+    no longer drops discovered captures.
+  - The crawl check and report now list the hosts the site links out to (subdomains / sibling
+    hosts that may deserve their own dig).
+  - Unverified, and worth saying plainly: with the default unwindowed prefix inventory, CDX has
+    already been asked for everything under the domain, so `discover` will mostly *confirm* absence
+    rather than recover files. Its real yield is on windowed or `--match host` digs. Files hosted
+    on another host are still not pulled or localized — only listed. Query-string pages cannot be
+    reversed from their file name and are skipped.
+
 ## Backlog (in order)
 
-- [ ] **L10 — never-crawled recovery.** `inventory --discover`: for never-crawled targets, query CDX
-  for the exact URL and its scheme/`www`/subdomain variants and add hits to the dig — the
-  "navigation-driven crawl" step from the magpu pipeline. Bounded and budgeted.
 - [ ] **L11 — provenance.** PREMIS-lite `events.jsonl` (`agent, tool, version, event_type,
   timestamp, input_hash`) for every stage, plus `site/PROVENANCE.json` mapping each output file to
   URL, capture timestamp, CDX digest and replay mode (PRD FR-E9).

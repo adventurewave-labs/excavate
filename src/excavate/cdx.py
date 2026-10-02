@@ -106,8 +106,19 @@ def _split_page(payload: list) -> tuple[list[list], str | None]:
     return payload, None
 
 
-def fetch_cdx_pages(query: CdxQuery, client: httpx.Client, limiter: RateLimiter | None = None,
-                    sleep_fn=time.sleep) -> tuple[list[dict], int]:
+@dataclass(frozen=True)
+class ExactQuery:
+    """Every capture of ONE url (CDX exact match — which is scheme-, `www`-
+    and case-insensitive on IA's side). Same no-collapse, no-filter rule."""
+
+    url: str
+
+    def params(self) -> dict[str, str]:
+        return {"output": "json", "showResumeKey": "true", "limit": str(CDX_PAGE_SIZE), "url": self.url}
+
+
+def fetch_cdx_pages(query: CdxQuery | ExactQuery, client: httpx.Client, limiter: RateLimiter | None = None,
+                    sleep_fn=time.sleep, allow_empty: bool = False) -> tuple[list[dict], int]:
     """Every raw CDX row for the query, following resume keys. Returns (rows, pages).
 
     Ragged rows (length != header) are skipped: the CDX API occasionally
@@ -124,6 +135,8 @@ def fetch_cdx_pages(query: CdxQuery, client: httpx.Client, limiter: RateLimiter 
         pages += 1
         if header is None:
             if not page:
+                if allow_empty:
+                    return [], pages  # a lookup that finds nothing is an answer, not an error
                 raise ValueError("malformed CDX payload (empty reply — no captures for this query?)")
             header = page[0]
         if page and page[0] == header:
@@ -270,6 +283,11 @@ def apply_inventory(dig: Dig, rows: list[dict], query: CdxQuery | None = None, p
                         cap[field] = prev.get(field)
                 elif prev.get("fetch_state") == "failed_4xx" and "alternates" in prev:
                     cap["alternates"] = prev["alternates"]  # already-exhausted chain stays exhausted
+        # URLs added by `discover` came from exact lookups outside this query's
+        # scope — a re-inventory must not silently drop them (their bytes may be on disk)
+        fresh = {cap["url"] for cap in caps}
+        caps.extend(prev for url, prev in existing.items() if prev.get("discovered_by") and url not in fresh)
+        caps.sort(key=lambda c: c["url"])
     dig.write_raw_manifest(rows)
     dig.save_captures(caps)
     dig.save_meta({**dig.meta(), "selection": {"at": at}})

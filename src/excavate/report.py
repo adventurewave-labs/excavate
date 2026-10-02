@@ -50,6 +50,10 @@ def _crawl_sections(crawl: dict) -> list[str]:
     if crawl["case_mismatch"]:
         lines += ["### Links that miss only by letter case (broken on a case-sensitive host)", ""]
         lines += [f"- `{e['target']}` — on disk as `{e['on_disk']}`; {_referrers(e)}" for e in crawl["case_mismatch"]] + [""]
+    if crawl["external_hosts"]:
+        lines += ["### Hosts the site links out to (not part of this dig)", "",
+                  "A subdomain or sibling host here may deserve its own `excavate inventory`.", ""]
+        lines += [f"- `{e['host']}` — {e['links']} link{'s' if e['links'] != 1 else ''}" for e in crawl["external_hosts"]] + [""]
     return lines
 
 
@@ -62,6 +66,7 @@ def run_report(dig: Dig) -> dict:
     digest_bad = [c for c in fetched if c.get("digest_ok") is False]
     digest_unverifiable = [c for c in fetched if c.get("digest_ok") is None]
     fallbacks = [c for c in fetched if c.get("fallback_from")]
+    discovered = [c for c in captures if c.get("discovered_by")]
     selection_at = (dig.meta().get("selection") or {}).get("at")
     permanent = [c for c in captures if c["fetch_state"] == "failed_4xx"]
     transient = [c for c in captures if c["fetch_state"] == "failed_5xx"]
@@ -85,6 +90,7 @@ def run_report(dig: Dig) -> dict:
         "|---|---|",
         f"| raw CDX rows (no collapse/filter) | {raw_rows} |",
         f"| unique URLs | {len(captures)} |",
+        f"| — added by `discover` (found by following the site's own links) | {len(discovered)} |",
         f"| fetched | {by_state.get('fetched', 0)} |",
         f"| — via a fallback capture (wanted one was gone) | {len(fallbacks)} |",
         f"| — digest verified against CDX (SHA-1) | {digest_verified} |",
@@ -138,6 +144,7 @@ def run_report(dig: Dig) -> dict:
         "crawl": crawl["counts"],
         "mismatches": len(mismatches),
         "fallbacks": len(fallbacks),
+        "discovered": len(discovered),
         "digest_verified": digest_verified,
         "digest_mismatch": len(digest_bad),
         "digest_unverifiable": len(digest_unverifiable),

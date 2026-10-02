@@ -81,6 +81,20 @@ class Dig:
             writer.writeheader()
             writer.writerows(rows)
 
+    def append_raw_manifest(self, rows: list[dict]) -> None:
+        """Add rows from a later lookup (discover) — the manifest stays the
+        complete audit trail of every CDX row this dig was built from."""
+        if not rows:
+            return
+        path = self.raw_manifest_path()
+        if not path.exists():
+            self.write_raw_manifest(rows)
+            return
+        with path.open(newline="") as fh:
+            fieldnames = next(csv.reader(fh))
+        with path.open("a", newline="") as fh:
+            csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore").writerows(rows)
+
     def raw_manifest_rows(self) -> list[dict]:
         with self.raw_manifest_path().open(newline="") as fh:
             return list(csv.DictReader(fh))

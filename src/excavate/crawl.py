@@ -20,15 +20,16 @@ from __future__ import annotations
 
 import json
 import posixpath
-from collections import deque
+from collections import Counter, deque
 
-from .clean import _decode, internal_targets, site_rel
+from .clean import _decode, external_hosts, internal_targets, site_rel
 from .dig import Dig, _atomic_write, safe_relpath
 
 PAGE_SUFFIXES = (".html", ".htm")
 LINKING_SUFFIXES = (*PAGE_SUFFIXES, ".css")
 ENTRY_CANDIDATES = ("index.html", "index.htm", "default.htm", "default.html", "home.html", "home.htm")
 REFERRERS_SHOWN = 3
+EXTERNAL_HOSTS_SHOWN = 25
 
 
 def _site_files(dig: Dig) -> set[str]:
@@ -37,16 +38,19 @@ def _site_files(dig: Dig) -> set[str]:
     return {p.relative_to(dig.site_dir).as_posix() for p in dig.site_dir.rglob("*") if p.is_file()}
 
 
-def _link_graph(dig: Dig, files: set[str]) -> dict[str, set[str]]:
-    """page → internal targets it references (HTML and CSS only carry links)."""
+def _link_graph(dig: Dig, files: set[str]) -> tuple[dict[str, set[str]], Counter]:
+    """(page → internal targets it references, external host → link count).
+    HTML and CSS are the only files that carry links."""
     domain = dig.domain
     graph: dict[str, set[str]] = {}
+    external: Counter = Counter()
     for rel in sorted(files):
         if rel.lower().endswith(LINKING_SUFFIXES):
-            data = (dig.site_dir / rel).read_bytes()
-            targets = internal_targets(_decode(data, rel.lower().endswith(".css")), domain, page_rel=rel)
+            text = _decode((dig.site_dir / rel).read_bytes(), rel.lower().endswith(".css"))
+            targets = internal_targets(text, domain, page_rel=rel)
             graph[rel] = {t for t in targets if t and t != rel}
-    return graph
+            external.update(external_hosts(text, domain, page_rel=rel))
+    return graph, external
 
 
 def _manifest_index(captures: list[dict]) -> dict[str, dict]:
@@ -73,7 +77,7 @@ def _why(capture: dict) -> str:
 def analyze(dig: Dig, captures: list[dict] | None = None) -> dict:
     captures = dig.load_captures() if captures is None else captures
     files = _site_files(dig)
-    graph = _link_graph(dig, files)
+    graph, external = _link_graph(dig, files)
     manifest = _manifest_index(captures)
     lower_files: dict[str, str] = {}
     for rel in sorted(files):
@@ -136,6 +140,10 @@ def analyze(dig: Dig, captures: list[dict] | None = None) -> dict:
         "archived_not_recovered": archived_not_recovered,
         "never_archived": never_archived,
         "orphans": orphans,
+        # hosts the pages link out to, busiest first — a subdomain or sibling
+        # host here (img.example.com, www2…) is a candidate for its own dig
+        "external_hosts": [{"host": host, "links": n} for host, n in
+                           sorted(external.items(), key=lambda item: (-item[1], item[0]))[:EXTERNAL_HOSTS_SHOWN]],
     }
 
 
