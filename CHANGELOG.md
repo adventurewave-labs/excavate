@@ -2,6 +2,15 @@
 
 ## Unreleased — SOTA loop (`claude/sota-loop`)
 
+### L3 — tokenizer-based rewriting
+- **Changed:** link discovery and rewriting use a span tokenizer (`excavate.rewrite`) instead of
+  a regex over `href|src|action`; only the URL spans are edited.
+- **Added:** unquoted attributes, `srcset`, `background`, `poster`, `<object data>`,
+  `<meta refresh>`, inline `style`, `@import`, `<base href>` resolution.
+- **Fixed:** URLs inside `<script>`, comments and `<textarea>` are no longer rewritten or counted;
+  `&amp;`-encoded query strings map to the right file; non-http schemes (`ftp:`, `irc:`, …) are
+  no longer reported as never-crawled; `#`, `%`, `?` in file names are escaped in links.
+
 ### L2 — encoding-faithful clean
 - **Fixed:** cleaned HTML/CSS is written back in the charset the page declares instead of always
   UTF-8 (legacy pages no longer turn to mojibake); pages with no rewrites are byte-identical.

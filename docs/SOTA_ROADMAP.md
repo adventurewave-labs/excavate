@@ -56,12 +56,23 @@ Every loop, in order:
     real captures. No statistical sniffing — an undeclared Shift_JIS/KOI8 page is handled
     byte-transparently (correct output, but its link scan runs on latin-1-decoded text).
 
+- [x] **L3 — tokenizer-based rewriting** (82 → 103 tests)
+  - New `rewrite.py`: a span tokenizer that locates each URL-bearing value and replaces only that
+    span — quoting, spacing, attribute order and broken markup pass through untouched. One scanner
+    feeds both the rewriter and the link graph.
+  - Now handled: unquoted attributes, `srcset`, `background`, `poster`, `<object data>`, `lowsrc`,
+    `longdesc`, `cite`, `<meta refresh>`, inline `style`, `<style>` blocks, CSS `@import`,
+    `<base href>` (links resolved against it, tag removed, logged), entity-encoded URLs
+    (`&amp;` in a query used to hash to a different file name than the real URL).
+  - No longer mistaken for links: anything inside `<script>`, comments, `<textarea>`, `<title>`,
+    CSS comments, or plain text. `ftp:` / `news:` / `irc:` / `aim:` links are external, not
+    "never-crawled". File names containing `#`, `%` or `?` are escaped when linked.
+  - Unverified: exercised on hand-written fixtures only, not on real 1990s tag soup at volume.
+    Not handled: URLs built in JavaScript, `<applet archive>`, SVG `xlink:href`, conditional
+    comments. Wayback prefixes with a short (<6 digit) timestamp are not recognised.
+
 ## Backlog (in order)
 
-- [ ] **L3 — tokenizer-based rewriting.** Replace the regex attribute scan with an
-  `html.parser`-driven span rewriter (edits only the URL bytes, leaves all other markup untouched):
-  unquoted attributes, `srcset`, `background`, `poster`, `data`, `longdesc`, `<meta refresh>`,
-  `<base href>` resolution, inline `style=""`, CSS `@import`; never rewrite inside `<script>` or comments.
 - [ ] **L4 — complete Wayback chrome removal.** Toolbar block
   (`<!-- BEGIN WAYBACK TOOLBAR INSERT -->…<!-- END … -->`), `/_static/` script/link injections,
   wombat / `__wm` init scripts, the `FILE ARCHIVED ON` trailer comment, and all replay modifiers

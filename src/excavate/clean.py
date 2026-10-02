@@ -16,9 +16,11 @@ import posixpath
 import re
 import shutil
 from pathlib import Path
+from urllib.parse import urljoin
 
 from .dig import Dig, safe_relpath
 from .encoding import decode_document, encode_document
+from .rewrite import scan
 
 # /web/<timestamp><mode>/ prefix inside im_-sourced or stale-linked content —
 # absolute and path-relative forms, any case (real pages vary)
@@ -29,12 +31,13 @@ WAYBACK_PREFIX_PROTOREL = re.compile(r"^//web\.archive\.org/web/\d{6,14}(?:id_|i
 # Wayback toolbar assets injected into im_ replay pages
 CHROME_ASSETS = re.compile(r"<link[^>]+(banner-styles\.css|iconochive\.css)[^>]*>", re.IGNORECASE)
 
-# attribute URLs we rewrite inside HTML; CSS url() handled separately
-ATTR_URL = re.compile(r"""(?P<attr>href|src|action)\s*=\s*(?P<q>["'])(?P<url>[^"']*)(?P=q)""")
-CSS_URL = re.compile(r"""url\((?P<q>["']?)(?P<url>[^"')]+)(?P=q)\)""")
-
+# URL discovery lives in rewrite.scan (a span tokenizer) — one scanner feeds
+# both the rewriter and the link graph
 TEXT_SUFFIXES = (".html", ".htm", ".css")
 _SKIP_PREFIXES = ("#", "mailto:", "tel:", "javascript:", "data:")
+# any other scheme (ftp:, news:, irc:, aim:, gopher: ...) is a link OUT of the
+# site — never a local file, never "never-crawled"
+_OTHER_SCHEME = re.compile(r"(?!https?:)[A-Za-z][A-Za-z0-9+.\-]*:", re.IGNORECASE)
 
 # a "rewrite" proper: `before` → `after` — chrome strips, collision notes and
 # ERROR lines are disclosed in the ledger but counted separately
@@ -60,7 +63,7 @@ def _classify(domain: str, url: str) -> tuple[str, str] | None:
     leaves them untouched; the link-graph resolves them against base_dir.
     """
     url = url.strip()
-    if not url or url.startswith(_SKIP_PREFIXES):
+    if not url or url.lower().startswith(_SKIP_PREFIXES):
         return None
     stripped = _strip_wayback(url)
     if stripped != url:
@@ -72,6 +75,8 @@ def _classify(domain: str, url: str) -> tuple[str, str] | None:
         rest = match.group(2) or "/"
     elif url.startswith("//"):
         return None  # protocol-relative external
+    elif _OTHER_SCHEME.match(url):
+        return None  # non-http scheme: external by definition
     elif not url.startswith("/"):
         return ("relative", url)
     else:
@@ -115,50 +120,59 @@ def page_relative(site_path: str, page_rel: str) -> str:
     return posixpath.relpath(site_path, posixpath.dirname(page_rel) or ".")
 
 
-def _rewrite(domain: str, url: str, rel_path: str) -> str | None:
+def _href_escape(path: str) -> str:
+    """A local path as written into a link. File names on disk are
+    percent-DEcoded, so a literal %, # or ? in one must be re-encoded or the
+    browser reads it as an escape, a fragment or a query."""
+    return path.replace("%", "%25").replace("#", "%23").replace("?", "%3F")
+
+
+def _rewrite(domain: str, url: str, rel_path: str, base_abs: str | None = None) -> str | None:
     """Rewritten form of `url` as written into `rel_path`; None = leave alone.
-    The #fragment survives the rewrite (it is not part of the file mapping)."""
+    The #fragment survives the rewrite (it is not part of the file mapping).
+    With a `<base href>` in play, every URL is first resolved against it —
+    the base tag itself is removed, so relative links must stop depending on it."""
+    if base_abs is not None:
+        stripped = _strip_wayback(url.strip())
+        if not stripped or stripped.lower().startswith(_SKIP_PREFIXES) or _OTHER_SCHEME.match(stripped):
+            return None
+        url = urljoin(base_abs, stripped)
     base, sep, fragment = url.partition("#")
     local = rewrite_target(domain, base)
     if local is None:
+        return url if base_abs is not None else None  # external (absolutized if it leaned on <base>)
+    return _href_escape(page_relative(local, rel_path)) + sep + fragment
+
+
+def _base_url(domain: str, rel_path: str, base_href: str | None) -> str | None:
+    """Absolute URL of the document's <base href>, or None if it has none."""
+    if not base_href:
         return None
-    return page_relative(local, rel_path) + sep + fragment
+    return urljoin(f"http://{domain}/{rel_path}", _strip_wayback(base_href))
 
 
 def clean_text(text: str, domain: str, rel_path: str, is_css: bool) -> tuple[str, list[str]]:
     """Rewrite one HTML/CSS document; returns (new_text, log_lines)."""
     log: list[str] = []
 
-    def record(before: str, after: str, flavor: str) -> None:
-        if after != before:
-            log.append(f"- `{before}` → `{after}` ({rel_path}{flavor})")
-
-    def sub_attr(match: re.Match) -> str:
-        url = match.group("url")
-        local = _rewrite(domain, url, rel_path)
-        if local is None:
-            return match.group(0)
-        record(url, local, "")
-        return f'{match.group("attr")}={match.group("q")}{local}{match.group("q")}'
-
-    def sub_css(match: re.Match) -> str:
-        url = match.group("url")
-        local = _rewrite(domain, url, rel_path)
-        if local is None:
-            return match.group(0)
-        record(url, local, ", css")
-        return f"url({match.group('q')}{local}{match.group('q')})"
-
     def sub_chrome(match: re.Match) -> str:
         log.append(f"- wayback chrome removed ({rel_path}): {match.group(0)[:80]}…")
         return "<!-- wayback chrome removed -->"
 
-    if is_css:
-        text = CSS_URL.sub(sub_css, text)
-    else:
+    if not is_css:
         text = CHROME_ASSETS.sub(sub_chrome, text)
-        text = ATTR_URL.sub(sub_attr, text)
-        text = CSS_URL.sub(sub_css, text)  # url() inside <style> blocks
+    document = scan(text, is_css)
+    base_abs = _base_url(domain, rel_path, document.base_href)
+
+    def rewrite(url: str, flavor: str) -> str | None:
+        new = _rewrite(domain, url, rel_path, base_abs)
+        if new is not None and new != url:
+            log.append(f"- `{url}` → `{new}` ({rel_path}{flavor})")
+        return new
+
+    text = document.apply(rewrite, base_replacement="<!-- base href removed: resolved into each link -->")
+    if base_abs is not None:
+        log.append(f"- <base href=`{document.base_href}`> removed ({rel_path}): links resolved against it individually")
     return text, log
 
 
@@ -169,13 +183,16 @@ def _decode(data: bytes, is_css: bool = False) -> str:
 def internal_targets(text: str, domain: str, page_rel: str = "") -> set[str]:
     """Local link targets in a document, resolved the way a browser would."""
     base_dir = posixpath.dirname(page_rel)
+    document = scan(text, is_css=page_rel.lower().endswith(".css"))
+    base_abs = _base_url(domain, page_rel, document.base_href)
     targets: set[str] = set()
-    for match in ATTR_URL.finditer(text):
-        target = local_target(domain, match.group("url"), base_dir)
-        if target is not None:
-            targets.add(target)
-    for match in CSS_URL.finditer(text):
-        target = local_target(domain, match.group("url"), base_dir)
+    for url in document.urls():
+        if base_abs is not None:
+            stripped = _strip_wayback(url)
+            if not stripped or stripped.lower().startswith(_SKIP_PREFIXES) or _OTHER_SCHEME.match(stripped):
+                continue
+            url = urljoin(base_abs, stripped)
+        target = local_target(domain, url.partition("#")[0], base_dir)
         if target is not None:
             targets.add(target)
     return targets
