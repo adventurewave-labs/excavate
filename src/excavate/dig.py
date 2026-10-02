@@ -16,6 +16,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -30,7 +31,7 @@ class Dig:
 
     # -- lifecycle -----------------------------------------------------------
     @classmethod
-    def create(cls, base: Path, domain: str) -> "Dig":
+    def create(cls, base: Path, domain: str) -> Dig:
         root = Path(base) / domain
         if root.exists() and (root / "captures.json").exists():
             return cls(root)  # resuming an existing dig is the normal path
@@ -42,7 +43,7 @@ class Dig:
         return dig
 
     @classmethod
-    def latest(cls, base: Path) -> "Dig":
+    def latest(cls, base: Path) -> Dig:
         base = Path(base)
         candidates = [p for p in base.iterdir() if (p / "captures.json").exists()] if base.exists() else []
         if not candidates:
@@ -57,7 +58,7 @@ class Dig:
         return data
 
     def save_meta(self, meta: dict) -> None:
-        (self.root / "meta.json").write_text(json.dumps(meta, indent=2))
+        _atomic_write(self.root / "meta.json", json.dumps(meta, indent=2))
 
     @property
     def domain(self) -> str:
@@ -83,7 +84,15 @@ class Dig:
         return json.loads((self.root / "captures.json").read_text())
 
     def save_captures(self, caps: list[dict]) -> None:
-        (self.root / "captures.json").write_text(json.dumps(caps, indent=2))
+        _atomic_write(self.root / "captures.json", json.dumps(caps, indent=2))
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """Write-then-rename: a kill mid-write leaves the previous state intact,
+    never a truncated captures.json (the resume contract depends on it)."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def sha1_hex(data: bytes) -> str:

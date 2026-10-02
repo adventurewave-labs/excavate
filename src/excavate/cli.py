@@ -50,7 +50,7 @@ def cmd_inventory(args: argparse.Namespace) -> int:
         with _client() as client:
             summary = run_inventory(args.domain, dig, client)
     except json.JSONDecodeError as exc:
-        raise SystemExit(f"CDX returned non-JSON (service degraded?): {exc}")
+        raise SystemExit(f"CDX returned non-JSON (service degraded?): {exc}") from exc
     print(
         f"inventoried {summary['domain']}: {summary['raw_rows']} raw CDX rows → "
         f"{summary['unique_urls']} unique URLs ({summary['pending']} pending, {summary['skipped']} skipped)"

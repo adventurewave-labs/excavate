@@ -105,6 +105,25 @@ def local_target(domain: str, url: str, base_dir: str = "") -> str | None:
     return safe_relpath(f"http://{domain}{value}")
 
 
+def page_relative(site_path: str, page_rel: str) -> str:
+    """Express a site-root path relative to the page that links to it.
+
+    Rewritten links must work from any page depth, from file:// and from a
+    sub-path deploy — so they are page-relative, never root-absolute.
+    """
+    return posixpath.relpath(site_path, posixpath.dirname(page_rel) or ".")
+
+
+def _rewrite(domain: str, url: str, rel_path: str) -> str | None:
+    """Rewritten form of `url` as written into `rel_path`; None = leave alone.
+    The #fragment survives the rewrite (it is not part of the file mapping)."""
+    base, sep, fragment = url.partition("#")
+    local = rewrite_target(domain, base)
+    if local is None:
+        return None
+    return page_relative(local, rel_path) + sep + fragment
+
+
 def clean_text(text: str, domain: str, rel_path: str, is_css: bool) -> tuple[str, list[str]]:
     """Rewrite one HTML/CSS document; returns (new_text, log_lines)."""
     log: list[str] = []
@@ -115,7 +134,7 @@ def clean_text(text: str, domain: str, rel_path: str, is_css: bool) -> tuple[str
 
     def sub_attr(match: re.Match) -> str:
         url = match.group("url")
-        local = rewrite_target(domain, url)
+        local = _rewrite(domain, url, rel_path)
         if local is None:
             return match.group(0)
         record(url, local, "")
@@ -123,7 +142,7 @@ def clean_text(text: str, domain: str, rel_path: str, is_css: bool) -> tuple[str
 
     def sub_css(match: re.Match) -> str:
         url = match.group("url")
-        local = rewrite_target(domain, url)
+        local = _rewrite(domain, url, rel_path)
         if local is None:
             return match.group(0)
         record(url, local, ", css")
@@ -232,6 +251,8 @@ def run_clean(dig: Dig) -> dict:
 
     for capture in valid:
         raw_file = _resolve_raw(dig, capture)
+        if raw_file is None:  # effective_pulled already filtered these
+            continue
         rel = site_rel(capture)
         target = dig.site_dir / rel
         target.parent.mkdir(parents=True, exist_ok=True)

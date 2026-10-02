@@ -29,7 +29,8 @@ domain ──inventory──▶ manifest (CDX, no filters)
 
 ## Development
 ```bash
-pip install -e .
+pip install -e ".[dev]"
+scripts/check.sh          # ruff + mypy + pytest, offline
 excavate --help
 ```
 

@@ -6,7 +6,8 @@ Rules from the spec:
 - exponential backoff on 429/5xx — 3 chances per row (total, across both
   replay modes), then the row fails
 - magic-byte validation on every body — content-types lie
-- resumable: only fetch_state == pending rows; state persists after every row
+- resumable: pending rows, then transient failures (failed_5xx); permanent
+  failures and fetched rows are never re-requested; state persists after every row
 - dedupe is keyed by URL, not disk existence — resumed runs overwrite their
   own path instead of forking -1/-2 copies
 
@@ -203,7 +204,10 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
             claimed[rel] = cap["url"]
             claimed_ci[rel.lower()] = cap["url"]
 
-    todo = [c for c in captures if c["fetch_state"] == "pending"]
+    # pending rows first, then transient failures (the "resume retries these"
+    # contract): permanent 4xx and skipped rows are never re-requested
+    todo = ([c for c in captures if c["fetch_state"] == "pending"]
+            + [c for c in captures if c["fetch_state"] == "failed_5xx"])
     if limit is not None and limit > 0:
         todo = todo[:limit]
     fetched = failed = 0
@@ -254,8 +258,8 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
             # a failed (re-)fetch never destroys previously-fetched bytes — they
             # are the best-known capture. The attempt is recorded, state stays
             # honest, and the report discloses it.
-            result["error"] = f"re-fetch failed ({result['fetch_state']}): {result.get('error')}"
             if prev_rel and claimed.get(prev_rel) == result["url"]:
+                result["error"] = f"re-fetch failed ({result['fetch_state']}): {result.get('error')}"
                 result.update(fetch_state="fetched", raw_path=f"raw/{prev_rel}",
                               path_collision=prev_collision or None, sha1_fetched=prev_sha1,
                               source=prev_source, http_status=prev_http, magic_ok=prev_magic)

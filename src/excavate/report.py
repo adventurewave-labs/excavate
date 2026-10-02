@@ -6,7 +6,6 @@ never-fake rule: anything missing is listed as missing.
 
 from __future__ import annotations
 
-import re
 from collections import Counter
 
 from .clean import REWRITE_LINE, _decode, effective_pulled, internal_targets, site_rel

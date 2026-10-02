@@ -33,7 +33,7 @@ def fetch_cdx_rows(domain: str, client: httpx.Client) -> list[dict]:
         # CDX error replies are JSON objects or plain strings — never a quiet empty dig
         raise ValueError(f"malformed CDX payload (got {type(payload).__name__})")
     header, *rows = payload
-    return [dict(zip(header, row)) for row in rows if len(row) == len(header)]
+    return [dict(zip(header, row, strict=True)) for row in rows if len(row) == len(header)]
 
 
 def _rank(row: dict) -> tuple:
