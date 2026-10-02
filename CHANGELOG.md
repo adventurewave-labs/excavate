@@ -2,6 +2,11 @@
 
 ## Unreleased — SOTA loop (`claude/sota-loop`)
 
+### L11 — provenance
+- **Added:** `events.jsonl` (append-only PREMIS-lite event log, one line per stage run) and
+  `site/PROVENANCE.json` (per-file source citations with Wayback links and hashes).
+- **Added:** "Chain of custody" section in the verification report.
+
 ### L10 — never-crawled recovery
 - **Added:** `excavate discover` — exact-URL CDX lookups for files the site links to but the
   manifest lacks; hits are added as pending captures (`discovered_by`), lookups are remembered.

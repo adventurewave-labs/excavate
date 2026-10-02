@@ -24,6 +24,7 @@ from collections import Counter, deque
 
 from .clean import _decode, external_hosts, internal_targets, site_rel
 from .dig import Dig, _atomic_write, safe_relpath
+from .provenance import SITE_PROVENANCE, record_event, tree_hash
 
 PAGE_SUFFIXES = (".html", ".htm")
 LINKING_SUFFIXES = (*PAGE_SUFFIXES, ".css")
@@ -35,7 +36,10 @@ EXTERNAL_HOSTS_SHOWN = 25
 def _site_files(dig: Dig) -> set[str]:
     if not dig.site_dir.exists():
         return set()
-    return {p.relative_to(dig.site_dir).as_posix() for p in dig.site_dir.rglob("*") if p.is_file()}
+    files = {p.relative_to(dig.site_dir).as_posix() for p in dig.site_dir.rglob("*") if p.is_file()}
+    if (dig.root / SITE_PROVENANCE).exists():
+        return files  # the site has a file of that name of its own; ours was written to the dig root
+    return files - {SITE_PROVENANCE}  # ours, not the site's — never an "orphan"
 
 
 def _link_graph(dig: Dig, files: set[str]) -> tuple[dict[str, set[str]], Counter]:
@@ -147,10 +151,12 @@ def analyze(dig: Dig, captures: list[dict] | None = None) -> dict:
     }
 
 
-def run_check(dig: Dig) -> dict:
+def run_check(dig: Dig, record: bool = True) -> dict:
     """Analyze the cleaned site and write crawl.json next to it."""
     result = analyze(dig)
     _atomic_write(dig.root / "crawl.json", json.dumps(result, indent=2))
+    if record:
+        record_event(dig, "check", tree_hash(dig.site_dir, exclude=(SITE_PROVENANCE,)), result["counts"])
     return result
 
 

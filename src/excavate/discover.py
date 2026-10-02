@@ -29,6 +29,7 @@ import httpx
 from .cdx import ExactQuery, fetch_cdx_pages, resolve_best
 from .crawl import analyze
 from .dig import Dig, _atomic_write
+from .provenance import lines_hash, record_event
 from .pull import RateLimiter
 
 DEFAULT_LIMIT = 200          # ≈ 7 minutes of CDX budget at 30 req/min
@@ -110,7 +111,7 @@ def run_discover(dig: Dig, client: httpx.Client, limiter: RateLimiter | None = N
         _atomic_write(_memo_path(dig), json.dumps(memo, indent=2, sort_keys=True))
 
     fetchable = sum(1 for cap in added if cap["fetch_state"] == "pending")
-    return {
+    summary = {
         "never_archived": len(missing),
         "already_checked": len(missing) - len(todo) - len(deferred) - len(irreversible),
         "looked_up": len(todo),
@@ -122,3 +123,5 @@ def run_discover(dig: Dig, client: httpx.Client, limiter: RateLimiter | None = N
         "deferred": len(deferred),
         "still_missing": sum(1 for target in todo if not memo.get(target, {}).get("found")),
     }
+    record_event(dig, "discover", lines_hash(todo), summary)
+    return summary

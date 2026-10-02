@@ -167,11 +167,22 @@ Every loop, in order:
     on another host are still not pulled or localized — only listed. Query-string pages cannot be
     reversed from their file name and are skipped.
 
+- [x] **L11 — provenance** (201 → 214 tests)
+  - `events.jsonl`: append-only PREMIS-lite log, one line per stage run (inventory, pull, clean,
+    check, discover, report) with `agent, tool, version, event_type, timestamp, input_hash` and the
+    outcome. An interrupted pull is recorded as incomplete. Same input → same hash; `clean` also
+    records the hash of the site it produced, so "did this rebuild change?" has a one-line answer.
+  - `site/PROVENANCE.json`: every file in the rebuilt site cites its URL, capture timestamp, a
+    Wayback link to that exact capture, the CDX digest and whether it verified, the replay mode,
+    the wanted capture when a fallback was used, and whether cleaning modified the bytes. It ships
+    with the site; if the site has its own `PROVENANCE.json`, ours goes to the dig root instead.
+  - The report gained a "Chain of custody" section.
+  - Unverified: this is PREMIS-*lite* by the PRD's field list — it has not been validated against
+    the PREMIS schema or loaded into any preservation tool. Timestamps are the local clock, unsigned;
+    the log is tamper-evident only in the sense that hashes would stop matching.
+
 ## Backlog (in order)
 
-- [ ] **L11 — provenance.** PREMIS-lite `events.jsonl` (`agent, tool, version, event_type,
-  timestamp, input_hash`) for every stage, plus `site/PROVENANCE.json` mapping each output file to
-  URL, capture timestamp, CDX digest and replay mode (PRD FR-E9).
 - [ ] **L12 — output-scan gate.** `excavate scan`: deterministic secret/credential/PII scan over
   everything in `site/` (keys, tokens, password files, private-key blocks, bulk emails/phones),
   reviewed-allowlist file, non-zero exit on findings (PRD FR-E5b — the velvet-bbs lesson).

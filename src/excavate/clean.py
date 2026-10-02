@@ -21,6 +21,7 @@ from urllib.parse import urljoin
 from .chrome import strip_chrome
 from .dig import Dig, safe_relpath
 from .encoding import decode_document, encode_document
+from .provenance import file_entry, raw_hash, record_event, tree_hash, write_site_provenance
 from .rewrite import scan
 from .twins import Twin, TwinIndex
 
@@ -283,6 +284,7 @@ def run_clean(dig: Dig, twin_swaps: bool = True) -> dict:
     all_log: list[str] = []
     internal: set[str] = set()
     encodings: dict[str, int] = {}
+    citations: dict[str, dict] = {}
 
     pulled, valid, errors = effective_pulled(dig, captures)
     all_log.extend(errors)
@@ -319,7 +321,9 @@ def run_clean(dig: Dig, twin_swaps: bool = True) -> dict:
             text, log = clean_text(doc.text, domain, rel, is_css=is_css, twins=twins)
             # no rewrite → the original bytes, untouched; otherwise re-encode in
             # the page's own charset so its declaration stays true
-            target.write_bytes(data if text == doc.text else encode_document(text, doc, is_css))
+            cleaned = data if text == doc.text else encode_document(text, doc, is_css)
+            target.write_bytes(cleaned)
+            citations[rel] = file_entry(capture, data, cleaned)
             encodings[doc.codec] = encodings.get(doc.codec, 0) + 1
             if doc.note:
                 all_log.append(f"- encoding: `{rel}` — {doc.note}; kept as `{doc.codec}`")
@@ -327,6 +331,8 @@ def run_clean(dig: Dig, twin_swaps: bool = True) -> dict:
             internal |= internal_targets(text, domain, page_rel=rel)
         else:
             shutil.copyfile(raw_file, target)
+            blob = raw_file.read_bytes()
+            citations[rel] = file_entry(capture, blob, blob)
 
         if capture.get("path_collision"):
             canonical = safe_relpath(capture["url"])
@@ -340,9 +346,17 @@ def run_clean(dig: Dig, twin_swaps: bool = True) -> dict:
         + "\n".join(all_log) + "\n",
         encoding="utf-8",
     )
+    provenance_path = write_site_provenance(dig, citations)
     never_crawled = sorted(t for t in internal if t not in pulled and t != "")
     rewrites = sum(1 for line in all_log if REWRITE_LINE.match(line))
-    return {"cleaned": len(valid), "rewrites": rewrites, "never_crawled": never_crawled,
-            "chrome_removed": sum(1 for line in all_log if CHROME_LINE.match(line)),
-            "twin_swaps": sum(1 for line in all_log if TWIN_LINE.match(line)),
-            "encodings": dict(sorted(encodings.items()))}
+    summary = {"cleaned": len(valid), "rewrites": rewrites, "never_crawled": never_crawled,
+               "chrome_removed": sum(1 for line in all_log if CHROME_LINE.match(line)),
+               "twin_swaps": sum(1 for line in all_log if TWIN_LINE.match(line)),
+               "encodings": dict(sorted(encodings.items()))}
+    record_event(dig, "clean", raw_hash(valid), {
+        **{key: summary[key] for key in ("cleaned", "rewrites", "chrome_removed", "twin_swaps")},
+        "never_crawled": len(never_crawled), "twin_swaps_enabled": twin_swaps,
+        "modified_files": sum(1 for entry in citations.values() if entry["modified_by_clean"]),
+        "site_hash": tree_hash(dig.site_dir, exclude=(provenance_path.name,)),
+    })
+    return summary

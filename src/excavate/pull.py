@@ -27,6 +27,7 @@ import time
 import httpx
 
 from .dig import Dig, safe_relpath, sha1_base32, sha1_hex
+from .provenance import record_event, selection_hash
 
 REQUESTS_PER_MINUTE = 30
 BACKOFF_SCHEDULE = (30, 60, 120)  # seconds; 3 chances per row, then it fails
@@ -257,13 +258,18 @@ def _claim_path(claimed: dict[str, str], claimed_ci: dict[str, str], rel: str, u
 
 def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
              limiter: RateLimiter | None = None, sleep_fn=time.sleep) -> dict:
+    asked = selection_hash(dig.load_captures())
+    summary: dict | None = None
     try:
-        return _run_pull(dig, client, limit, limiter, sleep_fn)
+        summary = _run_pull(dig, client, limit, limiter, sleep_fn)
+        return summary
     finally:
         # rows are committed one by one as they finish; the readable export is
         # refreshed once per run — including a run cut short by Ctrl-C or an error
         if dig.db_path.exists():
             dig.export_captures_json()
+        record_event(dig, "pull", asked, {"completed": summary is not None, "totals": dig.state_counts(),
+                                           **({k: summary[k] for k in ("attempted", "fetched", "failed")} if summary else {})})
 
 
 def _run_pull(dig: Dig, client: httpx.Client, limit: int | None,

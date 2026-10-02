@@ -11,6 +11,9 @@ from collections import Counter
 from .clean import REWRITE_LINE, TWIN_LINE, site_rel
 from .crawl import accounting_line, display_target, run_check
 from .dig import Dig
+from .provenance import load_events, record_event, selection_hash
+
+EVENTS_SHOWN = 15
 
 
 def _ledger_lines(dig: Dig) -> list[str]:
@@ -71,7 +74,7 @@ def run_report(dig: Dig) -> dict:
     permanent = [c for c in captures if c["fetch_state"] == "failed_4xx"]
     transient = [c for c in captures if c["fetch_state"] == "failed_5xx"]
     skipped = [c for c in captures if c["fetch_state"] == "skipped"]
-    crawl = run_check(dig)  # also refreshes crawl.json
+    crawl = run_check(dig, record=False)  # also refreshes crawl.json
     never_crawled = crawl["unresolved"]
     raw_rows = len(dig.raw_manifest_rows()) if dig.raw_manifest_path().exists() else 0
     rewrites = _rewrite_count(dig)
@@ -131,8 +134,7 @@ def run_report(dig: Dig) -> dict:
     lines += _crawl_sections(crawl)
     lines += ["## Reconstruction ledger", "", "No files reconstructed by hand in this run."]
 
-    (dig.root / "VERIFICATION-REPORT.md").write_text("\n".join(lines), encoding="utf-8")
-    return {
+    summary = {
         "raw_rows": raw_rows,
         "unique_urls": len(captures),
         "fetched": by_state.get("fetched", 0),
@@ -151,3 +153,16 @@ def run_report(dig: Dig) -> dict:
         "rewrites": rewrites,
         "twin_swaps": len(twin_lines),
     }
+    events = load_events(dig)
+    lines += ["", "## Chain of custody", "",
+              f"{len(events) + 1} recorded events in `events.jsonl` (append-only; one line per stage run). "
+              "Per-file source citations: `site/PROVENANCE.json`.", ""]
+    if events:
+        lines += ["| when (UTC) | stage | tool version | input |", "|---|---|---|---|"]
+        lines += [f"| {e['timestamp']} | {e['event_type']} | {e['version']} | `{e['input_hash'][:19]}…` |" for e in events[-EVENTS_SHOWN:]]
+        if len(events) > EVENTS_SHOWN:
+            lines += ["", f"(last {EVENTS_SHOWN} shown; full history in `events.jsonl`)"]
+    (dig.root / "VERIFICATION-REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+    record_event(dig, "report", selection_hash(captures),
+                 {key: value for key, value in summary.items() if not isinstance(value, dict)})
+    return summary

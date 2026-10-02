@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 import httpx
 
 from .dig import Dig
+from .provenance import lines_hash, record_event
 from .pull import BACKOFF_SCHEDULE, RateLimiter
 
 CDX_API = "https://web.archive.org/cdx/search/cdx"
@@ -296,7 +297,7 @@ def apply_inventory(dig: Dig, rows: list[dict], query: CdxQuery | None = None, p
                        "inventoried_at": datetime.now(UTC).isoformat(timespec="seconds")})
     dig.write_manifest_json(caps)
     pending = sum(1 for c in caps if c["fetch_state"] == "pending")
-    return {
+    summary = {
         "domain": dig.domain,
         "raw_rows": len(rows),
         "pages": pages,
@@ -304,6 +305,10 @@ def apply_inventory(dig: Dig, rows: list[dict], query: CdxQuery | None = None, p
         "pending": pending,
         "skipped": len(caps) - pending,
     }
+    asked = {"domain": dig.domain, "selection_at": at, **(query.describe() if query else {})}
+    record_event(dig, "inventory", lines_hash(f"{key}={value}" for key, value in asked.items()),
+                 {**summary, "query": asked})
+    return summary
 
 
 def run_inventory(domain: str, dig: Dig, client: httpx.Client, query: CdxQuery | None = None,
