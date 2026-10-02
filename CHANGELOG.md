@@ -2,6 +2,13 @@
 
 ## Unreleased — SOTA loop (`claude/sota-loop`)
 
+### L8 — crawl-check stage
+- **Added:** `excavate check [--strict]` and `crawl.json` — link-graph audit of the cleaned site:
+  recovered / never archived / archived but not recovered / case mismatch, plus reachability and
+  orphans.
+- **Changed:** the verification report's never-crawled list is split into those three groups, each
+  entry naming the pages that link to it.
+
 ### L7 — SQLite state store
 - **Changed:** dig state lives in `dig.sqlite`; `pull` updates one row per URL (constant cost at
   any dig size) instead of rewriting `captures.json` after every fetch.

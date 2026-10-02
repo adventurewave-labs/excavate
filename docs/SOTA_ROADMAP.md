@@ -125,11 +125,21 @@ Every loop, in order:
     next command; the database is correct and wins, but that path is covered by a simulated test,
     not a real kill. Not designed for two `excavate` processes on one dig at the same time.
 
+- [x] **L8 — crawl-check stage** (160 → 174 tests)
+  - New `crawl.py` + `excavate check [--strict]`: walks every internal link of the cleaned site
+    (HTML and CSS) and writes `crawl.json`. Each referenced target is classified: recovered /
+    **never archived** (no capture exists) / **archived but not recovered** (failed, skipped or
+    pending — with the reason) / **case mismatch** (on disk under different letter case).
+  - Reachability from the entry page: reachable files and orphans (recovered files nothing links to).
+  - The report now carries the strops-style accounting line and the three lists, each with the
+    pages that link to the missing file. `never_crawled` keeps its M0 meaning (everything
+    referenced but not on disk) — broken down, not redefined. `--strict` exits 1 if anything is
+    unresolved.
+  - Unverified: fixture site only. Links created by JavaScript, image maps served by CGI, and
+    form targets are invisible to the walk, so "orphan" means "not statically linked", not "unused".
+
 ## Backlog (in order)
 
-- [ ] **L8 — crawl-check stage (spec stage 4).** Its own module and `excavate check`: internal link
-  graph, reachability from the entry page, orphans, and the strops-style accounting
-  (referenced / recovered / never-crawled) written to `crawl.json` and consumed by the report.
 - [ ] **L9 — asset twin swap.** Dead link → surviving equivalent that is actually in the dig
   (`.mp3`→`.ogg`, case variants, `.htm`↔`.html`, `www`/scheme variants, trailing slash). Always a
   logged rewrite with its reason; never applied when the twin is not on disk.

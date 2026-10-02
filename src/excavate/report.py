@@ -8,19 +8,9 @@ from __future__ import annotations
 
 from collections import Counter
 
-from .clean import REWRITE_LINE, _decode, effective_pulled, internal_targets, site_rel
+from .clean import REWRITE_LINE, site_rel
+from .crawl import accounting_line, display_target, run_check
 from .dig import Dig
-
-
-def _never_crawled(dig: Dig, captures: list[dict]) -> list[str]:
-    pulled, _, _ = effective_pulled(dig, captures)  # same validity rule as clean
-    targets: set[str] = set()
-    for page in dig.site_dir.rglob("*"):
-        if page.is_file() and page.suffix.lower() in (".html", ".htm", ".css"):
-            page_rel = page.relative_to(dig.site_dir).as_posix()
-            is_css = page.suffix.lower() == ".css"
-            targets |= internal_targets(_decode(page.read_bytes(), is_css), dig.domain, page_rel=page_rel)
-    return sorted(t for t in targets if t not in pulled and t != "")
 
 
 def _rewrite_count(dig: Dig) -> int:
@@ -30,10 +20,35 @@ def _rewrite_count(dig: Dig) -> int:
     return sum(1 for line in path.read_text().splitlines() if REWRITE_LINE.match(line))
 
 
-def _display_target(target: str) -> str:
-    # a trailing-slash target could never match a pulled file by construction;
-    # show what would have to exist for it to resolve
-    return target + "index.html" if target.endswith("/") else target
+def _referrers(entry: dict) -> str:
+    shown = ", ".join(f"`{page}`" for page in entry["referenced_by"])
+    extra = entry["referrer_count"] - len(entry["referenced_by"])
+    return f"linked from {shown}" + (f" and {extra} more" if extra > 0 else "")
+
+
+def _crawl_sections(crawl: dict) -> list[str]:
+    counts = crawl["counts"]
+    if not counts["site_files"]:
+        return []
+    lines = ["## Crawl check (the site's own links, walked)", "", accounting_line(counts) + ".", ""]
+    if crawl["entry_page"] is None:
+        lines += ["No entry page (index.html or similar) was recovered — reachability not computed.", ""]
+    else:
+        lines += [f"From `{crawl['entry_page']}`: {counts['reachable_from_entry']} of {counts['site_files']} files "
+                  f"reachable by following links; {counts['orphans']} orphans ({counts['orphan_pages']} pages) — "
+                  "recovered files nothing links to. Listed in `crawl.json`.", ""]
+    if crawl["never_archived"]:
+        lines += ["### Referenced but never captured (never-crawled)", "",
+                  "The archive holds no capture of these at all. Listed as missing; nothing is faked.", ""]
+        lines += [f"- `{display_target(e['target'])}` — {_referrers(e)}" for e in crawl["never_archived"]] + [""]
+    if crawl["archived_not_recovered"]:
+        lines += ["### Referenced, known to the archive, not recovered", ""]
+        lines += [f"- `{display_target(e['target'])}` — {e['reason']}; {_referrers(e)}"
+                  for e in crawl["archived_not_recovered"]] + [""]
+    if crawl["case_mismatch"]:
+        lines += ["### Links that miss only by letter case (broken on a case-sensitive host)", ""]
+        lines += [f"- `{e['target']}` — on disk as `{e['on_disk']}`; {_referrers(e)}" for e in crawl["case_mismatch"]] + [""]
+    return lines
 
 
 def run_report(dig: Dig) -> dict:
@@ -49,7 +64,8 @@ def run_report(dig: Dig) -> dict:
     permanent = [c for c in captures if c["fetch_state"] == "failed_4xx"]
     transient = [c for c in captures if c["fetch_state"] == "failed_5xx"]
     skipped = [c for c in captures if c["fetch_state"] == "skipped"]
-    never_crawled = _never_crawled(dig, captures) if dig.site_dir.exists() else []
+    crawl = run_check(dig)  # also refreshes crawl.json
+    never_crawled = crawl["unresolved"]
     raw_rows = len(dig.raw_manifest_rows()) if dig.raw_manifest_path().exists() else 0
     rewrites = _rewrite_count(dig)
 
@@ -76,7 +92,7 @@ def run_report(dig: Dig) -> dict:
         f"| failed 5xx (transient — retry on resume) | {by_state.get('failed_5xx', 0)} |",
         f"| skipped (revisit-only / non-2xx best) | {by_state.get('skipped', 0)} |",
         f"| URL rewrites applied | {rewrites} |",
-        f"| referenced but never captured | {len(never_crawled)} |",
+        f"| referenced but not on disk (see crawl check) | {len(never_crawled)} |",
         "",
     ]
     if mismatches:
@@ -99,8 +115,7 @@ def run_report(dig: Dig) -> dict:
         lines += ["## Failed fetches — transient (5xx/429/transport; resume retries these)", ""] + [f"- `{c['url']}` — {c.get('error')}" for c in transient] + [""]
     if skipped:
         lines += ["## Skipped (no fetchable best capture)", ""] + [f"- `{c['url']}` — {c.get('skip_reason')}" for c in skipped] + [""]
-    if never_crawled:
-        lines += ["## Referenced but never captured (never-crawled)", ""] + [f"- `{_display_target(t)}`" for t in never_crawled] + [""]
+    lines += _crawl_sections(crawl)
     lines += ["## Reconstruction ledger", "", "No files reconstructed by hand in this run."]
 
     (dig.root / "VERIFICATION-REPORT.md").write_text("\n".join(lines), encoding="utf-8")
@@ -113,6 +128,7 @@ def run_report(dig: Dig) -> dict:
         "failed_transient": by_state.get("failed_5xx", 0),
         "skipped": by_state.get("skipped", 0),
         "never_crawled": len(never_crawled),
+        "crawl": crawl["counts"],
         "mismatches": len(mismatches),
         "fallbacks": len(fallbacks),
         "digest_verified": digest_verified,

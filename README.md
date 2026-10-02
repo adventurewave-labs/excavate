@@ -25,6 +25,7 @@ digs/<domain>/                     # one dig: dig.sqlite (state) · captures.jso
 domain ──inventory──▶ manifest (CDX, paginated, no filters; --match/--from/--to scope)
        ──pull────────▶ raw captures (id_ + im_ fallback, alternate-capture fallback, ≤30 req/min, resumable)
        ──clean───────▶ site/  (de-Wayback, rewrites logged, never fake missing files)
+       ──check───────▶ crawl.json (links walked: recovered / missing / orphans)
        ──report──────▶ VERIFICATION-REPORT.md (completeness accounting)
 ```
 

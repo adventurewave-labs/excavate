@@ -16,6 +16,7 @@ import httpx
 from . import __version__
 from .cdx import MATCH_TYPES, CdxQuery, parse_timestamp, run_inventory
 from .clean import run_clean
+from .crawl import accounting_line, run_check
 from .dig import Dig
 from .pull import REQUESTS_PER_MINUTE, RateLimiter, run_pull
 from .report import run_report
@@ -95,6 +96,23 @@ def cmd_clean(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_check(args: argparse.Namespace) -> int:
+    dig = _open_dig(args.dig)
+    result = run_check(dig)
+    counts = result["counts"]
+    if not counts["site_files"]:
+        raise SystemExit(f"nothing to check: {dig.site_dir} is empty — run `excavate clean` first")
+    print(f"check: {accounting_line(counts)}")
+    if result["entry_page"] is None:
+        print("  no entry page recovered — reachability not computed")
+    else:
+        print(f"  from {result['entry_page']}: {counts['reachable_from_entry']}/{counts['site_files']} files reachable, "
+              f"{counts['orphans']} orphans")
+    print(f"  detail: {dig.root / 'crawl.json'}")
+    # --strict makes an incomplete site a failing exit code (for scripts / gates)
+    return 1 if args.strict and counts["unresolved"] else 0
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     dig = _open_dig(args.dig)
     summary = run_report(dig)
@@ -132,6 +150,11 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("clean", help="de-Wayback rewrite into site/ (rewrites logged, never fake missing files)")
     p.add_argument("--dig", default=None, help="dig directory (default: most recent under digs/)")
     p.set_defaults(func=cmd_clean)
+
+    p = sub.add_parser("check", help="walk the cleaned site's links: recovered / missing / orphans (writes crawl.json)")
+    p.add_argument("--dig", default=None, help="dig directory (default: most recent under digs/)")
+    p.add_argument("--strict", action="store_true", help="exit 1 if any referenced file is not on disk")
+    p.set_defaults(func=cmd_check)
 
     p = sub.add_parser("report", help="emit VERIFICATION-REPORT.md (completeness accounting)")
     p.add_argument("--dig", default=None, help="dig directory (default: most recent under digs/)")
