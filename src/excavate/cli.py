@@ -84,11 +84,12 @@ def cmd_pull(args: argparse.Namespace) -> int:
 
 def cmd_clean(args: argparse.Namespace) -> int:
     dig = _open_dig(args.dig)
-    summary = run_clean(dig)
+    summary = run_clean(dig, twin_swaps=not args.no_twins)
     print(
         f"clean: {summary['cleaned']} files → {dig.site_dir}, "
         f"{summary['rewrites']} rewrites logged (REWRITES.md), "
         f"{summary['chrome_removed']} pieces of Wayback chrome removed, "
+        f"{summary['twin_swaps']} twin swaps, "
         f"{len(summary['never_crawled'])} never-crawled targets"
     )
     if summary["encodings"]:
@@ -149,6 +150,8 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("clean", help="de-Wayback rewrite into site/ (rewrites logged, never fake missing files)")
     p.add_argument("--dig", default=None, help="dig directory (default: most recent under digs/)")
+    p.add_argument("--no-twins", action="store_true",
+                   help="do not point dead links at surviving twins (.mp3→.ogg, case, .htm/.html); leave them as archived")
     p.set_defaults(func=cmd_clean)
 
     p = sub.add_parser("check", help="walk the cleaned site's links: recovered / missing / orphans (writes crawl.json)")

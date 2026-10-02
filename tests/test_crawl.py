@@ -46,7 +46,7 @@ def build(tmp: str, files: dict[str, bytes] | None = None) -> Dig:
     demo = fresh_capture("http://x.com/music/demo.mp3")
     demo.update(fetch_state="skipped", skip_reason="best capture status 404")
     dig.save_captures([*captures, gone, later, demo])
-    run_clean(dig)
+    run_clean(dig, twin_swaps=False)  # the crawl check must classify links exactly as the site wrote them
     return dig
 
 

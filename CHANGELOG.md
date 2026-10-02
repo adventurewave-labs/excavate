@@ -2,6 +2,11 @@
 
 ## Unreleased — SOTA loop (`claude/sota-loop`)
 
+### L9 — asset twin swap
+- **Added:** dead links are pointed at a surviving twin that is on disk (case, extension spelling,
+  index document, same-medium format such as `.mp3` → `.ogg`); each swap is logged with its reason
+  and listed in the report. `clean --no-twins` disables it.
+
 ### L8 — crawl-check stage
 - **Added:** `excavate check [--strict]` and `crawl.json` — link-graph audit of the cleaned site:
   recovered / never archived / archived but not recovered / case mismatch, plus reachability and

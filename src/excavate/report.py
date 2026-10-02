@@ -8,16 +8,18 @@ from __future__ import annotations
 
 from collections import Counter
 
-from .clean import REWRITE_LINE, site_rel
+from .clean import REWRITE_LINE, TWIN_LINE, site_rel
 from .crawl import accounting_line, display_target, run_check
 from .dig import Dig
 
 
-def _rewrite_count(dig: Dig) -> int:
+def _ledger_lines(dig: Dig) -> list[str]:
     path = dig.root / "REWRITES.md"
-    if not path.exists():
-        return 0
-    return sum(1 for line in path.read_text().splitlines() if REWRITE_LINE.match(line))
+    return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+
+
+def _rewrite_count(dig: Dig) -> int:
+    return sum(1 for line in _ledger_lines(dig) if REWRITE_LINE.match(line))
 
 
 def _referrers(entry: dict) -> str:
@@ -68,6 +70,7 @@ def run_report(dig: Dig) -> dict:
     never_crawled = crawl["unresolved"]
     raw_rows = len(dig.raw_manifest_rows()) if dig.raw_manifest_path().exists() else 0
     rewrites = _rewrite_count(dig)
+    twin_lines = [line for line in _ledger_lines(dig) if TWIN_LINE.match(line)]
 
     lines = [
         f"# VERIFICATION REPORT — {dig.domain}",
@@ -92,6 +95,7 @@ def run_report(dig: Dig) -> dict:
         f"| failed 5xx (transient — retry on resume) | {by_state.get('failed_5xx', 0)} |",
         f"| skipped (revisit-only / non-2xx best) | {by_state.get('skipped', 0)} |",
         f"| URL rewrites applied | {rewrites} |",
+        f"| — of which links swapped to a surviving twin | {len(twin_lines)} |",
         f"| referenced but not on disk (see crawl check) | {len(never_crawled)} |",
         "",
     ]
@@ -115,6 +119,9 @@ def run_report(dig: Dig) -> dict:
         lines += ["## Failed fetches — transient (5xx/429/transport; resume retries these)", ""] + [f"- `{c['url']}` — {c.get('error')}" for c in transient] + [""]
     if skipped:
         lines += ["## Skipped (no fetchable best capture)", ""] + [f"- `{c['url']}` — {c.get('skip_reason')}" for c in skipped] + [""]
+    if twin_lines:
+        lines += ["## Twin swaps (the linked file was never recovered; the link now points at a surviving equivalent)", ""]
+        lines += [*twin_lines, ""]
     lines += _crawl_sections(crawl)
     lines += ["## Reconstruction ledger", "", "No files reconstructed by hand in this run."]
 
@@ -135,4 +142,5 @@ def run_report(dig: Dig) -> dict:
         "digest_mismatch": len(digest_bad),
         "digest_unverifiable": len(digest_unverifiable),
         "rewrites": rewrites,
+        "twin_swaps": len(twin_lines),
     }

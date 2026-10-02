@@ -138,11 +138,21 @@ Every loop, in order:
   - Unverified: fixture site only. Links created by JavaScript, image maps served by CGI, and
     form targets are invisible to the walk, so "orphan" means "not statically linked", not "unused".
 
+- [x] **L9 — asset twin swap** (174 → 191 tests)
+  - New `twins.py`: when a link's target was never recovered, `clean` points it at a surviving
+    equivalent that is on disk — letter-case variant, extension spelling (`.htm`/`.html`,
+    `.jpg`/`.jpeg`), the directory's other index document, or another format of the same medium
+    (`.mp3` → `.ogg`, the magpu precedent). Page-relative links are covered too.
+  - Never guesses: ambiguous case/spelling/index candidates mean no swap; a link with no twin stays
+    exactly as written and stays listed as missing. No file is ever created.
+  - Each swap is a logged rewrite with its reason; the report has a count and a "Twin swaps"
+    section. `clean --no-twins` gives a strictly as-archived rebuild.
+  - Unverified: not run against the real magpu corpus the rule comes from. A format twin changes
+    what the visitor gets (a different encoding, or an image in another format) — that is disclosed
+    but is a judgment call; image format twins (`.gif` → `.png`) are the most debatable.
+
 ## Backlog (in order)
 
-- [ ] **L9 — asset twin swap.** Dead link → surviving equivalent that is actually in the dig
-  (`.mp3`→`.ogg`, case variants, `.htm`↔`.html`, `www`/scheme variants, trailing slash). Always a
-  logged rewrite with its reason; never applied when the twin is not on disk.
 - [ ] **L10 — never-crawled recovery.** `inventory --discover`: for never-crawled targets, query CDX
   for the exact URL and its scheme/`www`/subdomain variants and add hits to the dig — the
   "navigation-driven crawl" step from the magpu pipeline. Bounded and budgeted.

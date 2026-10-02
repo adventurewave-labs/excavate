@@ -22,6 +22,7 @@ from .chrome import strip_chrome
 from .dig import Dig, safe_relpath
 from .encoding import decode_document, encode_document
 from .rewrite import scan
+from .twins import Twin, TwinIndex
 
 # /web/<timestamp><mode>/ prefix inside im_-sourced or stale-linked content —
 # absolute and path-relative forms, any case (real pages vary)
@@ -41,6 +42,7 @@ _OTHER_SCHEME = re.compile(r"(?!https?:)[A-Za-z][A-Za-z0-9+.\-]*:", re.IGNORECAS
 # ERROR lines are disclosed in the ledger but counted separately
 REWRITE_LINE = re.compile(r"^- `.*` → `.*` \(")
 CHROME_LINE = re.compile(r"^- wayback chrome removed \(")
+TWIN_LINE = re.compile(r"^- `.*` → `.*` \(.*; twin: ")
 
 
 def same_site_host(host: str, domain: str) -> bool:
@@ -126,21 +128,41 @@ def _href_escape(path: str) -> str:
     return path.replace("%", "%25").replace("#", "%23").replace("?", "%3F")
 
 
-def _rewrite(domain: str, url: str, rel_path: str, base_abs: str | None = None) -> str | None:
-    """Rewritten form of `url` as written into `rel_path`; None = leave alone.
+def _rewrite(domain: str, url: str, rel_path: str, base_abs: str | None = None,
+             twins: TwinIndex | None = None) -> tuple[str | None, Twin | None]:
+    """(rewritten form of `url` as written into `rel_path`, twin used) —
+    (None, None) = leave alone.
+
     The #fragment survives the rewrite (it is not part of the file mapping).
     With a `<base href>` in play, every URL is first resolved against it —
-    the base tag itself is removed, so relative links must stop depending on it."""
+    the base tag itself is removed, so relative links must stop depending on it.
+    With a twin index, a link whose target was never recovered is pointed at
+    its surviving twin when one is on disk (page-relative links included —
+    otherwise those are left exactly as written).
+    """
     if base_abs is not None:
         stripped = _strip_wayback(url.strip())
         if not stripped or stripped.lower().startswith(_SKIP_PREFIXES) or _OTHER_SCHEME.match(stripped):
-            return None
+            return None, None
         url = urljoin(base_abs, stripped)
     base, sep, fragment = url.partition("#")
     local = rewrite_target(domain, base)
+    page_relative_link = False
     if local is None:
-        return url if base_abs is not None else None  # external (absolutized if it leaned on <base>)
-    return _href_escape(page_relative(local, rel_path)) + sep + fragment
+        if base_abs is not None:
+            return url, None  # external (absolutized because it leaned on <base>)
+        if twins is None:
+            return None, None
+        local = local_target(domain, base, posixpath.dirname(rel_path))
+        if local is None:
+            return None, None  # external, anchor, mailto, ...
+        page_relative_link = True
+    twin = twins.find(local) if twins is not None else None
+    if twin is not None:
+        local = twin.path
+    elif page_relative_link:
+        return None, None  # a working (or honestly missing) relative link is never touched
+    return _href_escape(page_relative(local, rel_path)) + sep + fragment, twin
 
 
 def _base_url(domain: str, rel_path: str, base_href: str | None) -> str | None:
@@ -150,7 +172,8 @@ def _base_url(domain: str, rel_path: str, base_href: str | None) -> str | None:
     return urljoin(f"http://{domain}/{rel_path}", _strip_wayback(base_href))
 
 
-def clean_text(text: str, domain: str, rel_path: str, is_css: bool) -> tuple[str, list[str]]:
+def clean_text(text: str, domain: str, rel_path: str, is_css: bool,
+               twins: TwinIndex | None = None) -> tuple[str, list[str]]:
     """Rewrite one HTML/CSS document; returns (new_text, log_lines)."""
     log: list[str] = []
 
@@ -162,9 +185,10 @@ def clean_text(text: str, domain: str, rel_path: str, is_css: bool) -> tuple[str
     base_abs = _base_url(domain, rel_path, document.base_href)
 
     def rewrite(url: str, flavor: str) -> str | None:
-        new = _rewrite(domain, url, rel_path, base_abs)
+        new, twin = _rewrite(domain, url, rel_path, base_abs, twins)
         if new is not None and new != url:
-            log.append(f"- `{url}` → `{new}` ({rel_path}{flavor})")
+            note = f"; twin: {twin.reason} — the linked file was never recovered" if twin else ""
+            log.append(f"- `{url}` → `{new}` ({rel_path}{flavor}{note})")
         return new
 
     text = document.apply(rewrite, base_replacement="<!-- base href removed: resolved into each link -->")
@@ -234,7 +258,10 @@ def effective_pulled(dig: Dig, captures: list[dict]) -> tuple[set[str], list[dic
     return {site_rel(c) for c in valid}, valid, errors
 
 
-def run_clean(dig: Dig) -> dict:
+def run_clean(dig: Dig, twin_swaps: bool = True) -> dict:
+    """De-Wayback raw/ into site/. `twin_swaps=False` leaves every link to a
+    never-recovered file exactly as the site wrote it (no surviving-twin
+    substitution) — for a strictly as-archived rebuild."""
     domain = dig.domain
     captures = dig.load_captures()
     all_log: list[str] = []
@@ -253,7 +280,9 @@ def run_clean(dig: Dig) -> dict:
         ledger.write_text(prior.rstrip() + "\n\n" + "\n".join(all_log)
                           + "\nno cleanable captures — site/ and prior ledger left untouched\n",
                           encoding="utf-8")
-        return {"cleaned": 0, "rewrites": 0, "never_crawled": [], "encodings": {}, "chrome_removed": 0}
+        return {"cleaned": 0, "rewrites": 0, "never_crawled": [], "encodings": {}, "chrome_removed": 0, "twin_swaps": 0}
+
+    twins = TwinIndex(pulled) if twin_swaps else None
 
     # full re-clean: wipe stale output so no orphan survives from earlier runs
     if dig.site_dir.exists():
@@ -271,7 +300,7 @@ def run_clean(dig: Dig) -> dict:
             is_css = rel.lower().endswith(".css")
             data = raw_file.read_bytes()
             doc = decode_document(data, is_css)
-            text, log = clean_text(doc.text, domain, rel, is_css=is_css)
+            text, log = clean_text(doc.text, domain, rel, is_css=is_css, twins=twins)
             # no rewrite → the original bytes, untouched; otherwise re-encode in
             # the page's own charset so its declaration stays true
             target.write_bytes(data if text == doc.text else encode_document(text, doc, is_css))
@@ -299,4 +328,5 @@ def run_clean(dig: Dig) -> dict:
     rewrites = sum(1 for line in all_log if REWRITE_LINE.match(line))
     return {"cleaned": len(valid), "rewrites": rewrites, "never_crawled": never_crawled,
             "chrome_removed": sum(1 for line in all_log if CHROME_LINE.match(line)),
+            "twin_swaps": sum(1 for line in all_log if TWIN_LINE.match(line)),
             "encodings": dict(sorted(encodings.items()))}
