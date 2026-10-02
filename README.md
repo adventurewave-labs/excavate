@@ -29,6 +29,7 @@ domain ──inventory──▶ manifest (CDX, paginated, no filters; --match/--
        ──discover────▶ exact-URL CDX lookups for linked-but-missing files (then pull again)
        ──scan────────▶ publish gate: credentials / bulk personal data in site/ (exit 1 if any unreviewed)
        ──report──────▶ VERIFICATION-REPORT.md (completeness accounting)
+       ──export──────▶ BagIt bag (RFC 8493): site + raw captures + paper trail, verifiable anywhere
 ```
 
 ## Development

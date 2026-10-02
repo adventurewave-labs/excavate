@@ -14,6 +14,7 @@ from pathlib import Path
 import httpx
 
 from . import __version__
+from .bagit import build_bag, verify_bag, zip_bag
 from .cdx import MATCH_TYPES, CdxQuery, parse_timestamp, run_inventory
 from .clean import run_clean
 from .crawl import accounting_line, run_check
@@ -155,6 +156,25 @@ def cmd_scan(args: argparse.Namespace) -> int:
     return 0 if result["clean"] else 1  # a hard gate: never 0 with unreviewed findings
 
 
+def cmd_export(args: argparse.Namespace) -> int:
+    if args.verify:
+        errors = verify_bag(Path(args.verify))
+        for error in errors:
+            print(f"  {error}")
+        print(f"verify: {args.verify} — " + ("VALID (complete, every checksum matches)" if not errors else f"INVALID, {len(errors)} problem(s)"))
+        return 1 if errors else 0
+    dig = _open_dig(args.dig)
+    summary = build_bag(dig, Path(args.output) if args.output else None, include_raw=not args.no_raw,
+                        require_clean=args.require_clean)
+    print(f"export: BagIt bag at {summary['bag']} — {summary['files']} files, {summary['size']}"
+          + ("" if summary["include_raw"] else " (raw captures not included)"))
+    if args.zip:
+        print(f"  zip: {zip_bag(Path(summary['bag']), summary['date'])}")
+    if summary["publish_gate"] != "clean":
+        print(f"  note: output scan is '{summary['publish_gate']}' — recorded in bag-info.txt; this bag is not cleared for publishing")
+    return 0
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     dig = _open_dig(args.dig)
     summary = run_report(dig)
@@ -212,6 +232,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--allow", default=None, metavar="FINGERPRINT", help="allow-list a reviewed finding (requires --reason)")
     p.add_argument("--reason", default=None, help="why the allow-listed finding is safe to publish")
     p.set_defaults(func=cmd_scan)
+
+    p = sub.add_parser("export", help="archive-grade export: a BagIt (RFC 8493) bag of site + raw captures + paper trail")
+    p.add_argument("--dig", default=None, help="dig directory (default: most recent under digs/)")
+    p.add_argument("--output", default=None, help="directory to create the bag in (default: <dig>/export/)")
+    p.add_argument("--zip", action="store_true", help="also write <bag>.zip (deterministic)")
+    p.add_argument("--no-raw", action="store_true", help="leave the as-fetched captures out of the bag")
+    p.add_argument("--require-clean", action="store_true", help="refuse unless the output scan is clean")
+    p.add_argument("--verify", default=None, metavar="BAG", help="verify an existing bag (directory or .zip) and exit")
+    p.set_defaults(func=cmd_export)
 
     p = sub.add_parser("report", help="emit VERIFICATION-REPORT.md (completeness accounting)")
     p.add_argument("--dig", default=None, help="dig directory (default: most recent under digs/)")

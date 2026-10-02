@@ -197,11 +197,22 @@ Every loop, in order:
     real old sites are unknown. It does not look inside archives, does no NER for names or
     addresses, and nothing yet *prevents* a deploy — there is no deploy step in M0 to block.
 
+- [x] **L13 — BagIt export** (230 → 249 tests)
+  - New `excavate export [--zip] [--no-raw] [--require-clean] [--output DIR]`: an RFC 8493 bag —
+    `bagit.txt`, `bag-info.txt` (with Payload-Oxum), `manifest-sha256.txt`, `tagmanifest-sha256.txt`
+    and a payload of `data/site/` (the rebuild), `data/raw/` (captures byte-for-byte as fetched) and
+    `data/dig/` (report, rewrite ledger, CDX manifest, capture state, crawl check, event log, scan).
+  - `excavate export --verify <bag|zip>`: completeness and every checksum, tag manifest, Payload-Oxum,
+    path-escape checks; exit 1 on any problem. `--zip` output is deterministic and single-rooted.
+  - The bag records the output-scan verdict in `bag-info.txt`. Decision: a bag is a preservation
+    copy, so it is written whatever the gate says and *labelled*; `--require-clean` makes the gate
+    a refusal. Flag that if you would rather export always refused.
+  - Unverified: validated only by this repo's own verifier — not yet checked with an independent
+    tool (`bagit.py` from the Library of Congress, or bagger). ZIP uses deflate, not zstd (the PRD's
+    suggestion needs Python 3.14). No WACZ output; that part of FR-E14 is not started.
+
 ## Backlog (in order)
 
-- [ ] **L13 — BagIt export.** `excavate export --bagit`: RFC 8493 bag (`bagit.txt`,
-  `manifest-sha256.txt`, `tagmanifest`, `bag-info.txt`) built deterministically, plus a verifier
-  (`excavate export --verify`) (PRD FR-E14).
 - [ ] **L14 — operator UX.** `excavate run <domain>` (inventory → pull → clean → check → report),
   `status`, `--json` on every command, meaningful exit codes, progress + ETA, and `pull --dry-run`
   ("921 URLs ≈ 31 min at 30 req/min").

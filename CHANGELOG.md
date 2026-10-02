@@ -2,6 +2,10 @@
 
 ## Unreleased — SOTA loop (`claude/sota-loop`)
 
+### L13 — BagIt export
+- **Added:** `excavate export` — RFC 8493 BagIt bag (site, raw captures, paper trail) with optional
+  deterministic ZIP; `excavate export --verify` validates any bag directory or ZIP.
+
 ### L12 — output-scan gate
 - **Added:** `excavate scan` — deterministic credential / bulk-PII scan of the output directory,
   exit 1 on any unreviewed finding; fingerprint allow-list with mandatory reasons; redacted
