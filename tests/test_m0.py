@@ -11,23 +11,23 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from excavate.cdx import apply_inventory, resolve_best  # noqa: E402
-from excavate.clean import clean_text, run_clean  # noqa: E402
-from excavate.dig import Dig, safe_relpath  # noqa: E402
-from excavate.pull import (  # noqa: E402
+from excavate.cdx import apply_inventory, resolve_best
+from excavate.clean import clean_text, run_clean
+from excavate.dig import Dig, safe_relpath
+from excavate.pull import (
     RateLimiter,
     fetch_one,
     magic_ok,
-    sniff_type,
     run_pull,
+    sniff_type,
 )
-from excavate.report import run_report  # noqa: E402
+from excavate.report import run_report
 
 CDX_HEADER = ["urlkey", "timestamp", "original", "mimetype", "statuscode", "digest", "length"]
 
 
 def cdx_row(url: str, ts: str, mime: str, status: str, digest: str = "abc") -> dict:
-    return dict(zip(CDX_HEADER, [url, ts, url, mime, status, digest, "100"]))
+    return dict(zip(CDX_HEADER, [url, ts, url, mime, status, digest, "100"], strict=True))
 
 
 def no_wait_limiter() -> RateLimiter:
@@ -269,7 +269,7 @@ class TestClean(unittest.TestCase):
         a2 = safe_relpath("http://x.com/a.html?x=2")
         self.assertNotEqual(a1, a2)
         html = '<a href="/a.html?x=2">q</a>'
-        text, log = clean_text(html, "x.com", "index.html", is_css=False)
+        text, _ = clean_text(html, "x.com", "index.html", is_css=False)
         self.assertIn(f'href="{a2}"', text)  # written link matches the stored filename
 
     def test_www_variant_is_internal(self):
@@ -280,7 +280,7 @@ class TestClean(unittest.TestCase):
 
     def test_uppercase_scheme_and_prefix_still_local(self):
         html = '<a href="HTTP://MAGPU.COM/page.html">caps</a><img src="HTTPS://WEB.ARCHIVE.ORG/web/20030601000000im_/https://magpu.com/i.png">'
-        text, log = clean_text(html, "magpu.com", "index.html", is_css=False)
+        text, _ = clean_text(html, "magpu.com", "index.html", is_css=False)
         self.assertIn('href="page.html"', text)  # not mistaken for a relative link
         self.assertIn('src="i.png"', text)
 

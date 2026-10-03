@@ -5,8 +5,13 @@ Rules from the spec:
 - <= 30 requests/minute sustained (observed ceiling ~60; we run at half)
 - exponential backoff on 429/5xx — 3 chances per row (total, across both
   replay modes), then the row fails
+- when the wanted capture is permanently gone, fall back through the URL's
+  other captures (nearest-first) before calling the file lost — disclosed
 - magic-byte validation on every body — content-types lie
-- resumable: only fetch_state == pending rows; state persists after every row
+- CDX digest verification on every `id_` body — proof the bytes on disk are
+  the bytes IA archived (unverifiable cases are recorded as such, with reason)
+- resumable: pending rows, then transient failures (failed_5xx); permanent
+  failures and fetched rows are never re-requested; state persists after every row
 - dedupe is keyed by URL, not disk existence — resumed runs overwrite their
   own path instead of forking -1/-2 copies
 
@@ -21,7 +26,8 @@ import time
 
 import httpx
 
-from .dig import Dig, safe_relpath, sha1_hex
+from .dig import Dig, safe_relpath, sha1_base32, sha1_hex
+from .provenance import record_event, selection_hash
 
 REQUESTS_PER_MINUTE = 30
 BACKOFF_SCHEDULE = (30, 60, 120)  # seconds; 3 chances per row, then it fails
@@ -89,6 +95,34 @@ def _ext(path: str) -> str:
     return ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
 
 
+_BASE32_SHA1 = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
+
+
+def verify_digest(capture: dict, body: bytes, source: str, headers: httpx.Headers) -> tuple[bool | None, str | None]:
+    """Compare the fetched body with the CDX digest. Returns (digest_ok, note).
+
+    True/False is only claimed when the comparison is meaningful: `id_` replay
+    returns the archived payload unmodified, so its SHA-1 must equal the CDX
+    digest. Everything else is None with the reason — an unverifiable body is
+    disclosed as unverifiable, never passed off as verified or as corrupt:
+    - `im_` replay is rewritten by Wayback, so it can never match;
+    - a content-encoded payload was digested in its encoded form, but the
+      HTTP client hands us decoded bytes;
+    - a CDX row with a missing/odd digest gives nothing to compare with.
+    """
+    expected = str(capture.get("digest") or "").strip().upper()
+    if len(expected) != 32 or not set(expected) <= _BASE32_SHA1:
+        return None, "no usable CDX digest"
+    if source != "id_":
+        return None, f"{source} replay is rewritten by Wayback"
+    if sha1_base32(body) == expected:
+        return True, None
+    encoding = headers.get("content-encoding") or headers.get("x-archive-orig-content-encoding")
+    if encoding and encoding.lower() != "identity":
+        return None, f"payload was content-encoded ({encoding}); digest covers the encoded bytes"
+    return False, f"sha1 {sha1_base32(body)} != CDX {expected}"
+
+
 def _replay_urls(capture: dict) -> list[tuple[str, str]]:
     base = f"https://web.archive.org/web/{capture['timestamp']}"
     return [
@@ -140,8 +174,11 @@ def fetch_one(capture: dict, client: httpx.Client, limiter: RateLimiter, sleep_f
             if response.status_code >= 400:
                 last_error = f"{source}: {response.status_code}"
                 break  # permanent for this mode; try the other
+            digest_ok, digest_note = verify_digest(capture, response.content, source, response.headers)
             capture.update(
                 fetch_state="fetched",
+                digest_ok=digest_ok,
+                digest_note=digest_note,
                 source=source,
                 http_status=response.status_code,
                 sha1_fetched=sha1_hex(response.content),
@@ -157,6 +194,39 @@ def fetch_one(capture: dict, client: httpx.Client, limiter: RateLimiter, sleep_f
         fetch_state="failed_5xx" if transient else "failed_4xx",
         error=last_error,
     )
+    return capture
+
+
+def _fall_back(capture: dict, client: httpx.Client, limiter: RateLimiter, sleep_fn) -> dict:
+    """The wanted capture is permanently gone (4xx in both replay modes): work
+    down the URL's alternate captures before declaring the file lost.
+
+    Only a PERMANENT failure triggers this — a transient one keeps the wanted
+    capture and is retried on resume. On success the row records which capture
+    was actually used (`timestamp`) and which was wanted (`fallback_from`);
+    on exhaustion it reverts to the wanted capture and lists every attempt.
+    """
+    alternates = capture.get("alternates") or []
+    if capture["fetch_state"] != "failed_4xx" or not alternates:
+        return capture
+    wanted = {field: capture.get(field) for field in ("timestamp", "digest", "mimetype")}
+    attempts = [f"{capture['timestamp']} ({capture.get('error')})"]
+    while capture["fetch_state"] == "failed_4xx" and alternates:
+        alternate = alternates.pop(0)
+        capture.update(timestamp=alternate["timestamp"], digest=alternate.get("digest", ""),
+                       mimetype=alternate.get("mimetype") or capture.get("mimetype"))
+        fetch_one(capture, client, limiter, sleep_fn=sleep_fn)
+        if capture["fetch_state"] == "fetched":
+            capture["fallback_from"] = wanted["timestamp"]
+            capture["alternates"] = alternates
+            return capture
+        attempts.append(f"{capture['timestamp']} ({capture.get('error')})")
+        if capture["fetch_state"] == "failed_5xx":
+            # throttled or flaky mid-chain: put this alternate back and let resume continue
+            alternates.insert(0, alternate)
+            break
+    capture.update(**wanted, alternates=alternates, fallback_from=None)
+    capture["error"] = f"{len(attempts)} captures tried: " + "; ".join(attempts)
     return capture
 
 
@@ -187,7 +257,24 @@ def _claim_path(claimed: dict[str, str], claimed_ci: dict[str, str], rel: str, u
 
 
 def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
-             limiter: RateLimiter | None = None, sleep_fn=time.sleep) -> dict:
+             limiter: RateLimiter | None = None, sleep_fn=time.sleep, progress=None) -> dict:
+    """`progress(done, total, capture)` is called after every row is persisted."""
+    asked = selection_hash(dig.load_captures())
+    summary: dict | None = None
+    try:
+        summary = _run_pull(dig, client, limit, limiter, sleep_fn, progress)
+        return summary
+    finally:
+        # rows are committed one by one as they finish; the readable export is
+        # refreshed once per run — including a run cut short by Ctrl-C or an error
+        if dig.db_path.exists():
+            dig.export_captures_json()
+        record_event(dig, "pull", asked, {"completed": summary is not None, "totals": dig.state_counts(),
+                                           **({k: summary[k] for k in ("attempted", "fetched", "failed")} if summary else {})})
+
+
+def _run_pull(dig: Dig, client: httpx.Client, limit: int | None,
+              limiter: RateLimiter | None, sleep_fn, progress=None) -> dict:
     limiter = limiter or RateLimiter(sleep_fn=sleep_fn)
     captures = dig.load_captures()
 
@@ -203,10 +290,22 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
             claimed[rel] = cap["url"]
             claimed_ci[rel.lower()] = cap["url"]
 
-    todo = [c for c in captures if c["fetch_state"] == "pending"]
+    # pending rows first, then transient failures (the "resume retries these"
+    # contract): permanent 4xx and skipped rows are never re-requested
+    todo = ([c for c in captures if c["fetch_state"] == "pending"]
+            + [c for c in captures if c["fetch_state"] == "failed_5xx"])
     if limit is not None and limit > 0:
         todo = todo[:limit]
     fetched = failed = 0
+    done = 0
+
+    def persist(row: dict) -> None:
+        nonlocal done
+        dig.save_capture(row)  # one row, after every row — kill-safe at any dig size
+        done += 1
+        if progress is not None:
+            progress(done, len(todo), row)
+
     for capture in todo:
         prev_rel = capture.get("raw_path")
         prev_rel = prev_rel[len("raw/"):] if prev_rel and prev_rel.startswith("raw/") else None
@@ -215,9 +314,12 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
         prev_source = capture.get("source")
         prev_http = capture.get("http_status")
         prev_magic = capture.get("magic_ok")
+        prev_digest = (capture.get("digest_ok"), capture.get("digest_note"))
         capture.update(sha1_fetched=None, source=None, http_status=None,
-                       magic_ok=None, error=None, path_collision=None)
+                       magic_ok=None, error=None, path_collision=None,
+                       digest_ok=None, digest_note=None)
         result = fetch_one(capture, client, limiter, sleep_fn=sleep_fn)
+        result = _fall_back(result, client, limiter, sleep_fn)
         body = result.pop("_body", None)
         if result["fetch_state"] == "fetched" and body is not None:
             if prev_rel and claimed.get(prev_rel) == result["url"]:
@@ -238,6 +340,7 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
                     result.update(fetch_state="fetched", raw_path=f"raw/{prev_rel}",
                                   path_collision=prev_collision or None, sha1_fetched=prev_sha1,
                                   source=prev_source, http_status=prev_http, magic_ok=prev_magic,
+                                  digest_ok=prev_digest[0], digest_note=prev_digest[1],
                                   error=f"re-fetch write failed (will retry on next pull): {exc}")
                 else:
                     result.update(fetch_state="failed_5xx", error=f"local write failed: {exc}",
@@ -245,7 +348,7 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
                     claimed.pop(rel, None)
                     claimed_ci.pop(rel.lower(), None)
                 failed += 1
-                dig.save_captures(captures)
+                persist(result)
                 continue
             result["raw_path"] = f"raw/{rel}"
             result["path_collision"] = collision or None
@@ -254,15 +357,17 @@ def run_pull(dig: Dig, client: httpx.Client, limit: int | None = None,
             # a failed (re-)fetch never destroys previously-fetched bytes — they
             # are the best-known capture. The attempt is recorded, state stays
             # honest, and the report discloses it.
-            result["error"] = f"re-fetch failed ({result['fetch_state']}): {result.get('error')}"
             if prev_rel and claimed.get(prev_rel) == result["url"]:
+                result["error"] = f"re-fetch failed ({result['fetch_state']}): {result.get('error')}"
                 result.update(fetch_state="fetched", raw_path=f"raw/{prev_rel}",
                               path_collision=prev_collision or None, sha1_fetched=prev_sha1,
-                              source=prev_source, http_status=prev_http, magic_ok=prev_magic)
+                              source=prev_source, http_status=prev_http, magic_ok=prev_magic,
+                              digest_ok=prev_digest[0], digest_note=prev_digest[1])
             else:
                 result.update(raw_path=None, path_collision=None)
             failed += 1
-        dig.save_captures(captures)  # persist after every row — kill-safe
+        persist(result)
+    dig.write_manifest_json(captures)  # keep the spec manifest in step with fetch states
     counts = {state: sum(1 for c in captures if c["fetch_state"] == state)
               for state in ("pending", "fetched", "failed_4xx", "failed_5xx", "skipped")}
     return {"attempted": len(todo), "fetched": fetched, "failed": failed, "totals": counts}
