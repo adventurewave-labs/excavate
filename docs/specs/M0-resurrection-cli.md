@@ -37,10 +37,22 @@ Every command is idempotent and resumable against the manifest; `report` emits `
 
 ## Acceptance tests (fixtures with known-good outputs)
 
-1. **magpu fixture:** re-run `inventory magpu.com` → expect ~921 unique URLs; after pull+clean, recovered-file count within noise of the shipped 853-file site; completeness accounting renders.
-2. **strops fixture:** 1,340 raw CDX rows; no-collapse/no-filter invariant asserted (row count ≥ filtered row count).
-3. **Resume test:** kill pull mid-run; re-run; zero duplicate fetches; manifest states consistent.
-4. **429 test:** mocked 429 → backoff engaged, no dropped rows.
+Replaced 2026-11-16: the magpu and strops corpora were never added to this repo and the shipped
+853-file comparison artifact no longer exists, so those two fixture tests were unsatisfiable as
+written. They are superseded by the **live-dig acceptance test**, which has now **PASSED**:
+
+1. **Live-dig acceptance (supersedes magpu + strops fixtures) — PASSED 2026-11-15/16.** One complete
+   dig against the real Wayback Machine (`info.cern.ch`), judged by the pipeline's own accounting:
+   114,893 raw CDX rows (paginated live, no collapse/filter) → 9,143 unique URLs → 3,644 fetched with
+   zero unclassified failures; site rebuilt (3,644 files / 3,207 pages); crawl accounting renders
+   (983 referenced / 645 recovered / 272 archived-not-recovered / 65 never-archived, all 65 confirmed
+   absent via `discover`); publish gate holds a real finding (not auto-approved); BagIt bag exported
+   and verified VALID. Evidence: `docs/live-dig-2026-11-16.md`. Residual risk lives in
+   `docs/SOTA_ROADMAP.md` (see its 2026-11-16 update note).
+2. **Resume test:** kill pull mid-run; re-run; zero duplicate fetches; manifest states consistent.
+3. **429 test:** mocked 429 → backoff engaged, no dropped rows.
+4. **Degradation test:** lived, not mocked — two 45–50-minute cycles under Wayback slowdown resumed
+   cleanly with zero corruption (evidence log, cycles 11–12 and P-Cycle 1).
 
 ## Constraints
 
@@ -66,11 +78,12 @@ Beyond the spec (pulled forward from the PRD because they are deterministic and 
 
 ### Acceptance tests
 
-1. **magpu fixture** — **open.** The corpus is not in this repo; nothing has been run against it.
-2. **strops fixture** — **open** for the same reason. The invariant itself (no collapse/filter parameter ever sent;
-   `manifest.csv` keeps every raw row) is asserted on synthetic rows.
-3. **Resume test** — passing (`tests/test_state_store.py`: kill mid-run, re-run, zero duplicate fetches).
-4. **429 test** — passing (`tests/test_m0.py`, `tests/test_cdx_inventory.py`: backoff engaged, no dropped rows).
+1. **Live-dig acceptance (supersedes the magpu + strops fixtures)** — **PASSED** 2026-11-15/16 against the
+   real Wayback Machine; evidence and per-cycle log: [`docs/live-dig-2026-11-16.md`](../live-dig-2026-11-16.md).
+   The no-collapse/no-filter invariant (the strops fixture's real assertion) also ran live: 114,893 raw rows
+   survived pagination unfiltered.
+2. **Resume test** — passing (`tests/test_state_store.py`: kill mid-run, re-run, zero duplicate fetches).
+3. **429 test** — passing (`tests/test_m0.py`, `tests/test_cdx_inventory.py`: backoff engaged, no dropped rows).
 
 ### Not verified
 

@@ -1,5 +1,19 @@
 # SOTA roadmap — Resurrection CLI hardening loop
 
+> **Update 2026-11-16 — first live validation.** Everything below was built against offline mocks; on
+> 2026-11-15/16 the whole pipeline ran end-to-end against the real Wayback Machine for the first time
+> (full per-cycle log: [`live-dig-2026-11-16.md`](live-dig-2026-11-16.md)). What the live dig exercised
+> successfully on real 1990s material: CDX pagination (resume-key page shape observed live, not inferred),
+> no-collapse/no-filter inventory at 114,893 rows, rate-limited pull with digest verification and
+> `id_`/`im_` fallback, resumability across two 45–50-minute archive-degradation windows (zero corruption),
+> charset-faithful clean on real historical tag soup, Wayback-chrome removal, crawl accounting, `discover`
+> dead-end confirmation (65 looked up, 65 confirmed absent), the publish gate (caught a real bulk-emails
+> finding and held it), and BagIt export + RFC 8493 verification. What live evidence does **not** yet cover:
+> twin swaps on a real corpus (no swap was needed by the cern dig), `--at` date-based capture selection at
+> scale, 429 backoff against real IA throttling (slowdown came as 5xx, handled), and hard-kill (SIGKILL)
+> mid-pull — the resume test remains unit-level. Per-item "Unverified" lines below are kept as written;
+> treat them as scoped-down by the live run where the log covers them.
+
 Branch `claude/sota-loop` · one loop ≈ one item · started 2026-10-02.
 Scope is the deterministic layer (PRD §6: "must be valuable with the LLM turned off").
 No LLM stages, no deploy, no paid API calls, no live Internet Archive traffic.
