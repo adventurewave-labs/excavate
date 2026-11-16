@@ -8,17 +8,20 @@ Two modes, one pipeline:
 
 ## Status
 - **PRD v0.4** — [`docs/PRD.md`](docs/PRD.md) (research-backed; addendum in [`docs/research/`](docs/research/))
-- **M0 Resurrection CLI** — implemented and hardened on branch `claude/sota-loop` (draft PR #3, not merged);
-  spec and its implementation status: [`docs/specs/M0-resurrection-cli.md`](docs/specs/M0-resurrection-cli.md);
-  what each hardening loop did and what is still unverified: [`docs/SOTA_ROADMAP.md`](docs/SOTA_ROADMAP.md).
-- **Not yet run against the live Wayback Machine.** Every test uses a mocked archive. The magpu and strops
-  acceptance fixtures named in the spec are not in this repo, so those two acceptance tests are still open.
+- **M0 Resurrection CLI** — implemented and hardened (PR #3, merged 2026-10-03), and now **validated against the
+  live Wayback Machine**: the first complete dig (2026-11-15/16) rebuilt `info.cern.ch` end to end — 114,893 raw CDX
+  rows → 9,143 unique URLs → **3,644 fetched** (49 permanent failures, classified per-row and disclosed, never faked),
+  site rebuilt (3,644 files / 3,207 pages), BagIt bag exported and checksum-verified VALID. Per-cycle evidence:
+  [`docs/live-dig-2026-11-16.md`](docs/live-dig-2026-11-16.md). Spec: [`docs/specs/M0-resurrection-cli.md`](docs/specs/M0-resurrection-cli.md);
+  hardening history and verification status per feature: [`docs/SOTA_ROADMAP.md`](docs/SOTA_ROADMAP.md).
+- **Publish gate holds 1 unreviewed finding** (a 1991 contact list with 21 addresses) — the exported bag is
+  deliberately not cleared for publishing until a human rules on it.
 - Naming undecided (working title only — "Excavate" collides with an existing OSS project; shortlist and domain checks in the PRD §10.1 / addendum §3)
 
 ## Quick start
 ```bash
 pip install -e .
-excavate run magpu.com            # inventory → pull → clean → check → scan → report
+excavate run info.cern.ch         # inventory → pull → clean → check → scan → report (first live-validated dig)
 excavate status                   # where the dig stands, what to run next (no network)
 excavate pull --dry-run           # how many URLs, how long — fetches nothing
 excavate export --zip             # BagIt bag: site + raw captures + paper trail
