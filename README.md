@@ -1,4 +1,4 @@
-# Excavate (working title)
+# Excavate 
 
 <p align="center"><img src="assets/banner.svg" alt="Excavate — the resurrection pipeline, animated: inventory → pull → clean → check → scan → report → export, over an excavation of strata" width="100%"></p>
 
