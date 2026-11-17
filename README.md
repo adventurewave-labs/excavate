@@ -2,7 +2,7 @@
 
 <p align="center"><img src="assets/banner.svg" alt="Excavate — the resurrection pipeline, animated: inventory → pull → clean → check → scan → report → export, over an excavation of strata" width="100%"></p>
 
-**Point it at any digital remains — a Wayback URL, a cloud drive, a directory, an entire hard drive — and it excavates, catalogs, and rebuilds them into living websites that tell the story.** Interactive landing page: [`docs/landing/index.html`](docs/landing/index.html)
+**Point it at any digital remains — a Wayback URL, a cloud drive, a directory, an entire hard drive — and it excavates, catalogs, and rebuilds them into living websites that tell the story.** Interactive landing page: **[adventurewave-labs.github.io/excavate](https://adventurewave-labs.github.io/excavate/)** (source: [`docs/index.html`](docs/index.html))
 
 Two modes, one pipeline:
 - **Resurrection** — dead website from the Wayback Machine → modern, deployed site.
