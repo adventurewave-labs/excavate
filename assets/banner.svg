@@ -1,0 +1,174 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+  <defs>
+    <linearGradient id="tg" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#38bdf8"/><stop offset=".52" stop-color="#e9eef5"/><stop offset="1" stop-color="#fbbf24"/>
+    </linearGradient>
+    <linearGradient id="strataGlow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fbbf24" stop-opacity=".9"/><stop offset="1" stop-color="#fbbf24" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="1.2" cy="1.2" r="1.2" fill="#38bdf8" opacity=".08"/>
+    </pattern>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="3"/>
+    </filter>
+    <filter id="glow2" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+  </defs>
+
+  <!-- ground -->
+  <rect width="1200" height="400" fill="#070b10"/>
+  <rect width="1200" height="400" fill="url(#dots)"/>
+
+  <!-- marching border -->
+  <rect x="7" y="7" width="1186" height="386" rx="16" fill="none" stroke="#1b2635" stroke-width="1.6"/>
+  <rect x="7" y="7" width="1186" height="386" rx="16" fill="none" stroke="#38bdf8" stroke-width="1.6"
+        stroke-dasharray="26 318" stroke-linecap="round" opacity=".8">
+    <animate attributeName="stroke-dashoffset" from="0" to="-688" dur="13s" repeatCount="indefinite"/>
+  </rect>
+  <rect x="7" y="7" width="1186" height="386" rx="16" fill="none" stroke="#fbbf24" stroke-width="1.6"
+        stroke-dasharray="12 332" stroke-linecap="round" opacity=".55">
+    <animate attributeName="stroke-dashoffset" from="-344" to="0" dur="13s" repeatCount="indefinite"/>
+  </rect>
+
+  <!-- title block -->
+  <text x="42" y="42" font-family="ui-monospace,'SF Mono',Menlo,Consolas,monospace" font-size="11.5" letter-spacing="3.4" fill="#38bdf8" opacity=".92">ADVENTUREWAVE LABS · DIGITAL ARCHAEOLOGY</text>
+  <text x="40" y="86" font-size="40" font-weight="800" letter-spacing="-1" fill="url(#tg)">Excavate</text>
+  <text x="42" y="112" font-family="ui-monospace,'SF Mono',Menlo,monospace" font-size="12.5" fill="#8fa0b4">point it at the remains → it digs, catalogs, and rebuilds — <tspan fill="#fbbf24">nothing faked, ever</tspan></text>
+
+  <!-- ============ pipeline ============ -->
+  <g font-family="ui-monospace,'SF Mono',Menlo,Consolas,monospace">
+    <!-- connector -->
+    <path d="M 114 168 L 1160 168" stroke="#1b2635" stroke-width="1.4"/>
+    <path d="M 114 168 L 1160 168" stroke="#38bdf8" stroke-width="1.4" stroke-dasharray="3 26" opacity=".35">
+      <animate attributeName="stroke-dashoffset" from="0" to="-232" dur="6s" repeatCount="indefinite"/>
+    </path>
+
+    <!-- 7 stage nodes, activation wave travels left→right -->
+    <g>
+      <!-- node template: rect + label -->
+      <g><rect x="40" y="146" width="148" height="44" rx="9"/>
+        <animate attributeName="stroke" values="#223047;#38bdf8;#38bdf8;#223047" keyTimes="0;.08;.55;1" dur="14s" begin="0s" repeatCount="indefinite"/>
+        <animate attributeName="stroke-width" values="1.4;2;2;1.4" keyTimes="0;.08;.55;1" dur="14s" begin="0s" repeatCount="indefinite"/>
+        <animate attributeName="fill" values="#0c121c;#0e1a29;#0e1a29;#0c121c" keyTimes="0;.08;.55;1" dur="14s" begin="0s" repeatCount="indefinite"/>
+      </g>
+      <g><rect x="202" y="146" width="148" height="44" rx="9"/>
+        <animate attributeName="stroke" values="#223047;#38bdf8;#38bdf8;#223047" keyTimes="0;.08;.55;1" dur="14s" begin="2s" repeatCount="indefinite"/>
+        <animate attributeName="stroke-width" values="1.4;2;2;1.4" keyTimes="0;.08;.55;1" dur="14s" begin="2s" repeatCount="indefinite"/>
+        <animate attributeName="fill" values="#0c121c;#0e1a29;#0e1a29;#0c121c" keyTimes="0;.08;.55;1" dur="14s" begin="2s" repeatCount="indefinite"/>
+      </g>
+      <g><rect x="364" y="146" width="148" height="44" rx="9"/>
+        <animate attributeName="stroke" values="#223047;#38bdf8;#38bdf8;#223047" keyTimes="0;.08;.55;1" dur="14s" begin="4s" repeatCount="indefinite"/>
+        <animate attributeName="stroke-width" values="1.4;2;2;1.4" keyTimes="0;.08;.55;1" dur="14s" begin="4s" repeatCount="indefinite"/>
+        <animate attributeName="fill" values="#0c121c;#0e1a29;#0e1a29;#0c121c" keyTimes="0;.08;.55;1" dur="14s" begin="4s" repeatCount="indefinite"/>
+      </g>
+      <g><rect x="526" y="146" width="148" height="44" rx="9"/>
+        <animate attributeName="stroke" values="#223047;#38bdf8;#38bdf8;#223047" keyTimes="0;.08;.55;1" dur="14s" begin="6s" repeatCount="indefinite"/>
+        <animate attributeName="stroke-width" values="1.4;2;2;1.4" keyTimes="0;.08;.55;1" dur="14s" begin="6s" repeatCount="indefinite"/>
+        <animate attributeName="fill" values="#0c121c;#0e1a29;#0e1a29;#0c121c" keyTimes="0;.08;.55;1" dur="14s" begin="6s" repeatCount="indefinite"/>
+      </g>
+      <g><rect x="688" y="146" width="148" height="44" rx="9"/>
+        <animate attributeName="stroke" values="#223047;#fbbf24;#fbbf24;#223047" keyTimes="0;.08;.55;1" dur="14s" begin="8s" repeatCount="indefinite"/>
+        <animate attributeName="stroke-width" values="1.4;2;2;1.4" keyTimes="0;.08;.55;1" dur="14s" begin="8s" repeatCount="indefinite"/>
+        <animate attributeName="fill" values="#0c121c;#1a1508;#1a1508;#0c121c" keyTimes="0;.08;.55;1" dur="14s" begin="8s" repeatCount="indefinite"/>
+      </g>
+      <g><rect x="850" y="146" width="148" height="44" rx="9"/>
+        <animate attributeName="stroke" values="#223047;#38bdf8;#38bdf8;#223047" keyTimes="0;.08;.55;1" dur="14s" begin="10s" repeatCount="indefinite"/>
+        <animate attributeName="stroke-width" values="1.4;2;2;1.4" keyTimes="0;.08;.55;1" dur="14s" begin="10s" repeatCount="indefinite"/>
+        <animate attributeName="fill" values="#0c121c;#0e1a29;#0e1a29;#0c121c" keyTimes="0;.08;.55;1" dur="14s" begin="10s" repeatCount="indefinite"/>
+      </g>
+      <g><rect x="1012" y="146" width="148" height="44" rx="9"/>
+        <animate attributeName="stroke" values="#223047;#fbbf24;#fbbf24;#223047" keyTimes="0;.08;.55;1" dur="14s" begin="12s" repeatCount="indefinite"/>
+        <animate attributeName="stroke-width" values="1.4;2;2;1.4" keyTimes="0;.08;.55;1" dur="14s" begin="12s" repeatCount="indefinite"/>
+        <animate attributeName="fill" values="#0c121c;#1a1508;#1a1508;#0c121c" keyTimes="0;.08;.55;1" dur="14s" begin="12s" repeatCount="indefinite"/>
+      </g>
+    </g>
+
+    <g font-size="13.5" letter-spacing="1.6" text-anchor="middle" fill="#e9eef5">
+      <text x="114" y="173">INVENTORY</text>
+      <text x="276" y="173">PULL</text>
+      <text x="438" y="173">CLEAN</text>
+      <text x="600" y="173">CHECK</text>
+      <text x="762" y="173" fill="#fbbf24">SCAN</text>
+      <text x="924" y="173">REPORT</text>
+      <text x="1086" y="173" fill="#fbbf24">EXPORT</text>
+    </g>
+
+    <!-- packets flowing along the connector -->
+    <circle r="3.2" fill="#fbbf24" filter="url(#glow2)">
+      <animateMotion path="M 114 168 L 1160 168" dur="7s" begin="0s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="2.6" fill="#38bdf8" filter="url(#glow)">
+      <animateMotion path="M 114 168 L 1160 168" dur="10s" begin="2.4s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="2.6" fill="#38bdf8" filter="url(#glow)">
+      <animateMotion path="M 114 168 L 1160 168" dur="13s" begin="5.1s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <!-- ============ bottom-left: stat chips ============ -->
+  <g font-family="ui-monospace,'SF Mono',Menlo,Consolas,monospace" font-size="12">
+    <g>
+      <rect x="42" y="222" width="200" height="30" rx="8" fill="#0c121c" stroke="#1b2635"/>
+      <text x="58" y="242" fill="#fbbf24" font-weight="700">3,644</text><text x="106" y="242" fill="#8fa0b4">files rebuilt</text>
+      <animate attributeName="opacity" values=".85;1;1;.85" dur="6s" repeatCount="indefinite"/>
+    </g>
+    <g>
+      <rect x="252" y="222" width="200" height="30" rx="8" fill="#0c121c" stroke="#1b2635"/>
+      <text x="268" y="242" fill="#fbbf24" font-weight="700">3,207</text><text x="318" y="242" fill="#8fa0b4">pages cleaned</text>
+    </g>
+    <g>
+      <rect x="42" y="260" width="200" height="30" rx="8" fill="#0c121c" stroke="#1b2635"/>
+      <text x="58" y="280" fill="#38bdf8" font-weight="700">98.7%</text><text x="110" y="280" fill="#8fa0b4">of dig recovered</text>
+    </g>
+    <g>
+      <rect x="252" y="260" width="200" height="30" rx="8" fill="#0c121c" stroke="#1b2635"/>
+      <text x="268" y="280" fill="#38bdf8" font-weight="700">BAG ✓</text><text x="322" y="280" fill="#8fa0b4">RFC 8493 verified</text>
+    </g>
+  </g>
+
+  <!-- ============ bottom-right: strata / excavation depth ============ -->
+  <g>
+    <text x="628" y="216" font-family="ui-monospace,'SF Mono',Menlo,Consolas,monospace" font-size="10.5" letter-spacing="2.6" fill="#8fa0b4" opacity=".85">EXCAVATION DEPTH · info.cern.ch · 1991→NOW</text>
+    <g stroke="#0a0f16">
+      <rect x="628" y="224" width="532" height="26" fill="#111826"/>
+      <rect x="628" y="250" width="532" height="26" fill="#0e1520"/>
+      <rect x="628" y="276" width="532" height="26" fill="#131a28"/>
+      <rect x="628" y="302" width="532" height="26" fill="#0e1520"/>
+      <rect x="628" y="328" width="532" height="26" fill="#111826"/>
+    </g>
+    <g stroke="#fbbf24" stroke-width=".7" opacity=".28">
+      <line x1="628" y1="250" x2="1160" y2="250"/>
+      <line x1="628" y1="276" x2="1160" y2="276"/>
+      <line x1="628" y1="302" x2="1160" y2="302"/>
+      <line x1="628" y1="328" x2="1160" y2="328"/>
+    </g>
+
+    <!-- artifacts: buried fragments that light as the cursor passes -->
+    <g fill="#fbbf24">
+      <g transform="translate(700,236)"><rect x="-4" y="-4" width="8" height="8" transform="rotate(45)"><animate attributeName="opacity" values=".25;1;1;.25" keyTimes="0;.1;.6;1" dur="9s" begin="0s" repeatCount="indefinite"/></rect></g>
+      <g transform="translate(824,262)"><circle r="4"><animate attributeName="opacity" values=".25;1;1;.25" keyTimes="0;.1;.6;1" dur="9s" begin="1.8s" repeatCount="indefinite"/></circle></g>
+      <g transform="translate(948,238)"><rect x="-4" y="-4" width="8" height="8" transform="rotate(45)"><animate attributeName="opacity" values=".25;1;1;.25" keyTimes="0;.1;.6;1" dur="9s" begin="0.7s" repeatCount="indefinite"/></rect></g>
+      <g transform="translate(1058,290)"><circle r="4"><animate attributeName="opacity" values=".25;1;1;.25" keyTimes="0;.1;.6;1" dur="9s" begin="3.6s" repeatCount="indefinite"/></circle></g>
+      <g transform="translate(762,316)"><rect x="-4" y="-4" width="8" height="8" transform="rotate(45)"><animate attributeName="opacity" values=".25;1;1;.25" keyTimes="0;.1;.6;1" dur="9s" begin="5.1s" repeatCount="indefinite"/></rect></g>
+      <g transform="translate(890,340)"><circle r="4"><animate attributeName="opacity" values=".25;1;1;.25" keyTimes="0;.1;.6;1" dur="9s" begin="6.9s" repeatCount="indefinite"/></circle></g>
+      <g transform="translate(1022,342)"><rect x="-4" y="-4" width="8" height="8" transform="rotate(45)"><animate attributeName="opacity" values=".25;1;1;.25" keyTimes="0;.1;.6;1" dur="9s" begin="7.9s" repeatCount="indefinite"/></rect></g>
+    </g>
+
+    <!-- depth cursor sweeping down -->
+    <g>
+      <rect x="628" y="218" width="532" height="14" fill="url(#strataGlow)" opacity=".55">
+        <animate attributeName="y" values="218;354;218" keyTimes="0;.5;1" dur="9s" repeatCount="indefinite"/>
+      </rect>
+      <line x1="628" y1="225" x2="1160" y2="225" stroke="#fbbf24" stroke-width="1.6" filter="url(#glow)">
+        <animate attributeName="y1" values="225;361;225" keyTimes="0;.5;1" dur="9s" repeatCount="indefinite"/>
+        <animate attributeName="y2" values="225;361;225" keyTimes="0;.5;1" dur="9s" repeatCount="indefinite"/>
+      </line>
+    </g>
+    <text x="628" y="374" font-family="ui-monospace,'SF Mono',Menlo,Consolas,monospace" font-size="10" fill="#8fa0b4" opacity=".7">every fragment cataloged · every rewrite logged · missing listed as missing</text>
+  </g>
+
+  <!-- footer -->
+  <text x="42" y="378" font-family="ui-monospace,'SF Mono',Menlo,Consolas,monospace" font-size="11" fill="#8fa0b4" opacity=".85">github.com/adventurewave-labs/excavate</text>
+</svg>
